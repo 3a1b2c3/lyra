@@ -25,6 +25,11 @@ The ability to generate virtual environments is crucial for applications ranging
 [Jun Gao](https://www.cs.toronto.edu/~jungao/),
 [Xuanchi Ren](https://xuanchiren.com/) <br>
 
+## News
+
+- 2026-03-16: Lyra 2.0 coming soon!
+- 2025-09-23: Code and paper released for Lyra!
+  
 ## Installation
 
 Please follow the [INSTALL.md](INSTALL.md) to set up your conda environment and download pre-trained weights.
