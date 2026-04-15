@@ -33,19 +33,17 @@ Lyra source code is released under the [Apache 2.0 License](LICENSE). Please ref
 ```bibtex
 @article{shen2026lyra2,
   title={Lyra 2.0: Explorable Generative 3D Worlds},
-  author={Shen, Tianchang and Bahmani, Sherwin and He, Kai and Srinivasan, Sangeetha Grama and Cao, Tianshi and 
-          Ren, Jiawei and Li, Ruilong and Wang, Zian and Sharp, Nicholas and Gojcic, Zan and Fidler, Sanja and 
-          Huang, Jiahui and Ling, Huan and Gao, Jun and Ren, Xuanchi},
+  author={Shen, Tianchang and Bahmani, Sherwin and He, Kai and Srinivasan, Sangeetha Grama and Cao, Tianshi and Ren, Jiawei and Li, Ruilong and Wang, Zian and Sharp, Nicholas and Gojcic, Zan and Fidler, Sanja and Huang, Jiahui and Ling, Huan and Gao, Jun and Ren, Xuanchi},
   journal={arXiv preprint arXiv:2604.13036},
   year={2026}
 }
 
-@article{bahmani2025lyra,
+@inproceedings{bahmani2026lyra,
   title={Lyra: Generative 3D Scene Reconstruction via Video Diffusion Model Self-Distillation},
   author={Bahmani, Sherwin and Shen, Tianchang and Ren, Jiawei and Huang, Jiahui and Jiang, Yifeng and 
           Turki, Haithem and Tagliasacchi, Andrea and Lindell, David B. and Gojcic, Zan and Fidler, Sanja and 
           Ling, Huan and Gao, Jun and Ren, Xuanchi},
-  journal={arXiv preprint arXiv:2509.19296},
-  year={2025}
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2026}
 }
 ```

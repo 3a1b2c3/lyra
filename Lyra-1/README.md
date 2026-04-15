@@ -150,13 +150,13 @@ We are also grateful to several other open-source repositories that we drew insp
 
 ## Citation
 ```
-@inproceedings{bahmani2025lyra,
+@inproceedings{bahmani2026lyra,
    title={Lyra: Generative 3D Scene Reconstruction via Video Diffusion Model Self-Distillation},
    author={Bahmani, Sherwin and Shen, Tianchang and Ren, Jiawei and Huang, Jiahui and Jiang, Yifeng and 
             Turki, Haithem and Tagliasacchi, Andrea and Lindell, David B. and Gojcic, Zan and Fidler, Sanja and 
             Ling, Huan and Gao, Jun and Ren, Xuanchi},
-   booktitle={arXiv preprint arXiv:2509.19296},
-   year={2025}
+   booktitle={International Conference on Learning Representations (ICLR)},
+   year={2026}
 }
 ```
 
