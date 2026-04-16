@@ -32,6 +32,7 @@ NVIDIA <br>
 - 🚀 [April 15, 2026] Paper, model weights, and inference code are now publicly available!
 - 🔜 [Coming Soon] GUI for interactive scene generation.
 - 🔜 [Coming Soon] 4-step distillation LoRA.
+- ⏳ [Planned] Training code and data processing scripts.
 
 ## Installation
 
