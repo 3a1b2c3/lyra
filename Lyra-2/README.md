@@ -159,6 +159,7 @@ We thank the following open-source projects that this work builds upon:
 - [FramePack](https://github.com/lllyasviel/FramePack)
 - [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3)
 - [MoGe](https://github.com/microsoft/MoGe)
+- [Marble](https://marble.worldlabs.ai/)
 
 Some example input images included in `assets/` are sourced from the [Tanks and Temples](https://www.tanksandtemples.org/) benchmark and [Marble](https://marble.worldlabs.ai/) by World Labs. We thank the respective authors for making these resources available.
 
