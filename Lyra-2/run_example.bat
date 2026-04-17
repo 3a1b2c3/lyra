@@ -22,7 +22,8 @@ python -m lyra_2._src.inference.lyra2_zoomgs_inference ^
     --num_frames_zoom_out 81 ^
     --resolution 480,832 ^
     --offload ^
-    --warp_chunk_size 4
+    --warp_chunk_size 4 ^
+    --num_sampling_step 20
 
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "Get-Date -Format HH:mm:ss"') do set END_TIME=%%t
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-Date).Ticks"') do set END_TICKS=%%t
