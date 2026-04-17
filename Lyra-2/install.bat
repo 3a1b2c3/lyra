@@ -26,9 +26,16 @@ pip install --no-deps -r requirements_windows.txt
 :: Activate MSVC (cl.exe) so CUDA extensions can compile
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
+:: editables + hatch-vcs are needed by depth_anything_3's hatchling build
+pip install editables "hatch-vcs>=0.4"
+
 set USE_SYSTEM_EIGEN=1
+:: vipe: CUDA extension — requires MSVC (cl.exe) in PATH; falls back to JIT if not compiled
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 pip install --no-build-isolation -e lyra_2/_src/inference/vipe
-pip install --no-build-isolation -e "lyra_2/_src/inference/depth_anything_3[gs]"
+
+:: depth_anything_3: install without [gs] (gsplat needs Linux/CUDA build env)
+pip install --no-build-isolation --no-deps -e lyra_2/_src/inference/depth_anything_3
 
 set PYTHONPATH=%~dp0
 python -c "import torch, flash_attn, vipe_ext, depth_anything_3.api, moge.model.v1; print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available()); print('all imports OK')"
