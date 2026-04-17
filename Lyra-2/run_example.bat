@@ -9,6 +9,7 @@ python -m lyra_2._src.inference.lyra2_zoomgs_inference ^
     --input_image_path assets/samples ^
     --prompt_dir assets/samples ^
     --sample_id 0 ^
+    --experiment lyra2 ^
     --checkpoint_dir checkpoints/model ^
     --output_path results_example/videos ^
     --num_frames_zoom_in 81 ^
