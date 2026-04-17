@@ -14,9 +14,11 @@ python -m lyra_2._src.inference.lyra2_zoomgs_inference ^
     --experiment lyra2 ^
     --checkpoint_dir checkpoints/model ^
     --output_path results_example/videos ^
-    --num_frames_zoom_in 81 ^
-    --num_frames_zoom_out 81 ^
-    --resolution 480,832
+    --num_frames_zoom_in 49 ^
+    --num_frames_zoom_out 49 ^
+    --resolution 480,832 ^
+    --offload ^
+    --warp_chunk_size 4
 
 echo.
 echo Start : %START_TIME%
