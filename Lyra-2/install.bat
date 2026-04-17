@@ -7,9 +7,9 @@ pip install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.
 :: Main requirements (megatron-core excluded — installed separately below)
 pip install --no-deps -r requirements_windows_base.txt
 
-:: megatron-core: its setup.py spawns subprocesses that fail inside pip's
-:: isolated build env on Windows; --no-build-isolation uses the live venv instead
-pip install --no-build-isolation --no-deps megatron-core==0.12.1
+:: megatron-core: cannot be built on Windows; a single-GPU stub lives at
+:: Lyra-2/megatron/ and is importable when PYTHONPATH includes the Lyra-2 dir
+echo [INFO] Skipping megatron-core (using built-in single-GPU stub)
 
 :: MoGe: use uv to avoid the Windows pip git-subprocess thread bug
 uv pip install "git+https://github.com/microsoft/MoGe.git"
