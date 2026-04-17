@@ -28,13 +28,32 @@ try:
     from flash_attn.layers.rotary import apply_rotary_emb as flash_apply_rotary_emb
 except ImportError:
     flash_apply_rotary_emb = None
-    raise ImportError("flash_attn is not installed.")
 
 from torch.distributed import ProcessGroup, get_process_group_ranks
 from torch.distributed._composable.fsdp import fully_shard
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper as ptd_checkpoint_wrapper
 from torchvision import transforms
-from transformer_engine.pytorch.attention import DotProductAttention
+try:
+    from transformer_engine.pytorch.attention import DotProductAttention
+except ImportError:
+    import torch.nn.functional as _F
+
+    class DotProductAttention(nn.Module):
+        """PyTorch SDPA fallback when transformer_engine is unavailable (e.g. Windows)."""
+
+        def __init__(self, num_heads, head_dim, num_gqa_groups=None,
+                     attention_dropout=0.0, qkv_format="bshd",
+                     attn_mask_type="no_mask", **kwargs):
+            super().__init__()
+            self._dropout = attention_dropout
+
+        def forward(self, q, k, v, **kwargs):
+            # Input/output: (B, S, H, D) — bshd format
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)  # bhsd
+            out = _F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self._dropout if self.training else 0.0
+            )
+            return out.transpose(1, 2)  # back to bshd
 
 from lyra_2._ext.imaginaire.utils import log
 from lyra_2._src.callbacks.model_weights_stats import WeightTrainingStat

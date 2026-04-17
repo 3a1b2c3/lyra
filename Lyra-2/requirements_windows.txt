@@ -1,0 +1,6 @@
+# Windows-specific overrides on top of requirements.txt
+# Install order matters: pip install --no-deps -r requirements.txt, then this file.
+
+# Pre-built flash-attn wheel for Windows (cu128, torch 2.7, cp312)
+# Source: https://github.com/mjun0812/flash-attention-prebuild-wheels
+flash_attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.10/flash_attn-2.8.2+cu128torch2.7-cp312-cp312-win_amd64.whl
