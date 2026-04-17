@@ -23,9 +23,12 @@ pip install --no-build-isolation "transformer_engine[pytorch]" || echo [WARN] tr
 :: flash-attn: use pre-built Windows wheel (cu128, torch 2.7, cp312)
 pip install --no-deps -r requirements_windows.txt
 
+:: Activate MSVC (cl.exe) so CUDA extensions can compile
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+
 set USE_SYSTEM_EIGEN=1
 pip install --no-build-isolation -e lyra_2/_src/inference/vipe
-pip install --no-build-isolation -e lyra_2/_src/inference/depth_anything_3[gs]
+pip install --no-build-isolation -e "lyra_2/_src/inference/depth_anything_3[gs]"
 
 set PYTHONPATH=%~dp0
 python -c "import torch, flash_attn, vipe_ext, depth_anything_3.api, moge.model.v1; print('torch:', torch.__version__, '| cuda:', torch.cuda.is_available()); print('all imports OK')"
