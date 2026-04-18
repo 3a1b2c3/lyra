@@ -761,8 +761,10 @@ class Lyra2InferencePipeline:
             )
         finally:
             self.model._collect_return_condition_state = prev_collect
+        log.info("prepare_inputs done; gc + cache clear", rank0_only=True)
         gc.collect()
         torch.cuda.empty_cache()
+        log.info("gc done", rank0_only=True)
         warp_pixels = getattr(self.model, "_latest_condition_state_pixels", None)
         if self.use_pose and warp_pixels is not None:
             if isinstance(warp_pixels, torch.Tensor) and warp_pixels.dim() == 5:
@@ -771,8 +773,12 @@ class Lyra2InferencePipeline:
             self.warp_video_collect.append(warp_pixels.detach().float().cpu())
         history_window = latents_full[:, :, : -T_new_lat]
 
+        log.info("restore model to GPU: start", rank0_only=True)
         self._restore_model_to_gpu()
+        log.info("restore model to GPU: done", rank0_only=True)
+        log.info("prepare text embeddings: start", rank0_only=True)
         pos_text, neg_text = self._prepare_text_embeddings(t5_text_embeddings, neg_t5_text_embeddings)
+        log.info("prepare text embeddings: done", rank0_only=True)
         last_hist_frame_cast = misc.to(self.last_hist_frame, **self.model.tensor_kwargs)
         padding_mask_cast = misc.to(self.padding_mask, **self.model.tensor_kwargs) if self.padding_mask is not None else None
         if not self.args.use_dmd_scheduler:

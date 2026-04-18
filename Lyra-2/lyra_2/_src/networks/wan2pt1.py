@@ -58,11 +58,13 @@ except ImportError:
             self._dropout = attention_dropout
 
         def forward(self, q, k, v, **kwargs):
-            # bshd -> bhsd; contiguous() required for cuDNN kernel dispatch
+            # bshd -> bhsd; contiguous() required for flash/cuDNN kernel dispatch
             q = q.transpose(1, 2).contiguous()
             k = k.transpose(1, 2).contiguous()
             v = v.transpose(1, 2).contiguous()
-            with _sdpa_kernel(backends=[SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            # FA3 (FLASH_ATTENTION) first: PyTorch 2.7 built-in, supports SM100+ Blackwell.
+            # cuDNN next, then xFormers efficient attention as fallback.
+            with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
                 out = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v, dropout_p=self._dropout if self.training else 0.0
                 )
