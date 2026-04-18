@@ -18,7 +18,7 @@ for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-Date).Ticks"') d
 
 :: --guidance default is 5.0; lower (e.g. 3.0) speeds up convergence at slight quality cost.
 :: Moot when --use_dmd is set since DMD distills away CFG entirely.
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/samples --prompt_dir assets/samples --num_samples 15 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_example/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --worldcache --log_file results_example\run.log
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/samples --prompt_dir assets/samples --num_samples 15 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_example/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --worldcache --worldcache_drift_threshold 0.4 --torch_compile --log_file results_example\run.log
 
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "Get-Date -Format HH:mm:ss"') do set END_TIME=%%t
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-Date).Ticks"') do set END_TICKS=%%t

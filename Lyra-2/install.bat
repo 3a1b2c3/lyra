@@ -1,6 +1,8 @@
 @echo off
 cd /d "%~dp0"
-call ..\.venv\Scripts\activate.bat
+set VIRTUAL_ENV=%~dp0..\.venv
+set PATH=%VIRTUAL_ENV%\Scripts;%PATH%
+set PYTHONHOME=
 
 pip install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu128
 

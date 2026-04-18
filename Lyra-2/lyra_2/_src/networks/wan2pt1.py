@@ -47,9 +47,14 @@ try:
     from transformer_engine.pytorch.attention import DotProductAttention
 except ImportError:
     from torch.nn.attention import SDPBackend, sdpa_kernel as _sdpa_kernel
+    try:
+        from sageattention import sageattn as _sageattn
+        _USE_SAGE = True
+    except ImportError:
+        _USE_SAGE = False
 
     class DotProductAttention(nn.Module):
-        """cuDNN SDPA fallback when transformer_engine is unavailable (e.g. Windows)."""
+        """SageAttention (INT8 quantized) when available, else cuDNN SDPA fallback."""
 
         def __init__(self, num_heads, head_dim, num_gqa_groups=None,
                      attention_dropout=0.0, qkv_format="bshd",
@@ -58,16 +63,17 @@ except ImportError:
             self._dropout = attention_dropout
 
         def forward(self, q, k, v, **kwargs):
-            # bshd -> bhsd; contiguous() required for flash/cuDNN kernel dispatch
+            # bshd -> bhsd
             q = q.transpose(1, 2).contiguous()
             k = k.transpose(1, 2).contiguous()
             v = v.transpose(1, 2).contiguous()
-            # FA3 (FLASH_ATTENTION) first: PyTorch 2.7 built-in, supports SM100+ Blackwell.
-            # cuDNN next, then xFormers efficient attention as fallback.
-            with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
-                out = torch.nn.functional.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self._dropout if self.training else 0.0
-                )
+            if _USE_SAGE and not self.training:
+                out = _sageattn(q, k, v)
+            else:
+                with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+                    out = torch.nn.functional.scaled_dot_product_attention(
+                        q, k, v, dropout_p=self._dropout if self.training else 0.0
+                    )
             return out.transpose(1, 2)
 
 from lyra_2._ext.imaginaire.utils import log
