@@ -70,6 +70,13 @@ try:
 except ModuleNotFoundError:
     FLASH_ATTN_3_AVAILABLE = False
 
+try:
+    from flash_attn import flash_attn_func as flash_attn2_func
+    FLASH_ATTN_2_AVAILABLE = True
+except ImportError:
+    flash_attn2_func = None
+    FLASH_ATTN_2_AVAILABLE = False
+
 
 def get_device_cc(device) -> int:
     """
@@ -153,6 +160,11 @@ def attention(
                 "Deterministic mode in attention is only supported when Flash Attention 3 is available."
             )
 
+        # Use flash_attn2 directly if available — bypasses PyTorch SDPA dispatch
+        # which lacks flash attention on stock Windows cu128 PyTorch builds.
+        if FLASH_ATTN_2_AVAILABLE and is_half:
+            return flash_attn2_func(q, k, v, dropout_p=dropout_p, softmax_scale=softmax_scale, causal=causal)
+
         # Torch 2.6 and later allows priorities for backends, but for older versions
         # we can only run with a specific backend. As long as we pick ones we're certain
         # will work on that device, it should be fine.
@@ -162,6 +174,9 @@ def attention(
         except TypeError:
             sdpa_kernel_ = sdpa_kernel
             SDPA_BACKENDS = [BEST_SDPA_BACKEND]
+
+        if SDPBackend.MATH not in SDPA_BACKENDS:
+            SDPA_BACKENDS.append(SDPBackend.MATH)
 
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
