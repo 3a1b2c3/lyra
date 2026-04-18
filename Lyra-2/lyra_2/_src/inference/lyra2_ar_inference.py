@@ -344,21 +344,25 @@ def save_output(to_show, vid_save_path):
         f"video_array.shape: {video_array.shape} value: {video_array.max()}, {video_array.min()}, save to {vid_save_path}"
     )
     base_stem, _ = os.path.splitext(vid_save_path)
-    save_img_or_video(
-        rearrange(legancy_to_show, "n b c t h w -> c t (n h) (b w)"),
-        base_stem,
-        fps=16,
-    )
-    # Also save a subsampled preview that keeps every 8th frame.
-    stride = 8
-    subsampled = legancy_to_show[:, :, :, ::stride]
-    subsampled_stem = f"{base_stem}_stride{stride}"
-    save_img_or_video(
-        rearrange(subsampled, "n b c t h w -> c t (n h) (b w)"),
-        subsampled_stem,
-        fps=16,
-    )
-    log.info(f"save video to {vid_save_path}", rank0_only=True)
+    try:
+        save_img_or_video(
+            rearrange(legancy_to_show, "n b c t h w -> c t (n h) (b w)"),
+            base_stem,
+            fps=16,
+        )
+        stride = 8
+        subsampled = legancy_to_show[:, :, :, ::stride]
+        subsampled_stem = f"{base_stem}_stride{stride}"
+        save_img_or_video(
+            rearrange(subsampled, "n b c t h w -> c t (n h) (b w)"),
+            subsampled_stem,
+            fps=16,
+        )
+        log.info(f"save video to {vid_save_path}", rank0_only=True)
+    except Exception as _e:
+        log.info(f"video save failed ({_e}), saving frames as npz: {base_stem}.npz", rank0_only=True)
+        import numpy as np
+        np.savez_compressed(f"{base_stem}.npz", frames=video_array)
 
 
 class Lyra2InferencePipeline:

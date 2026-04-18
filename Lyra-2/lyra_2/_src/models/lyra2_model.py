@@ -1650,7 +1650,7 @@ class Lyra2Model(WANDiffusionModel):
 
             spatial_condition_pixels_list: list[torch.Tensor] = []
 
-            with misc.timer("camera_pose_condition - corruptor"):
+            with misc.timer("camera_pose_condition - warp"):
                 # _warp_multisrc: shared helper for accumulated PCD / correspondence warping.
                 def _warp_multisrc(
                     src_rgb: torch.Tensor,

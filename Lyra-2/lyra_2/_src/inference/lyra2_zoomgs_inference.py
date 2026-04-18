@@ -180,6 +180,8 @@ def parse_arguments() -> argparse.Namespace:
                         help="Wrap model.net with torch.compile for ~10-30%% extra speed.")
 
     # Camera trajectory for zoom
+    parser.add_argument("--skip_zoom_out", action="store_true",
+                        help="Skip zoom-out generation. Output is zoom-in only (~2x faster per sample).")
     parser.add_argument("--zoom_in_trajectory", type=str, default="horizontal_zoom",
                         choices=list(CAMERA_TRAJECTORY_CHOICES),
                         help="Camera trajectory for zoom-in video.")
@@ -588,8 +590,20 @@ if __name__ == "__main__":
 
     if getattr(args, "torch_compile", False):
         try:
-            model.net = torch.compile(model.net, mode="reduce-overhead", dynamic=True)
-            log.info("torch.compile applied to model.net", rank0_only=True)
+            # Use aot_eager backend: traces graph without triton/inductor, removes Python overhead
+            _probe = torch.compile(lambda x: x + 1, backend="aot_eager")
+            _probe(torch.zeros(1, device="cuda"))
+            # Unwrap checkpoint wrappers — they interfere with compile graph fusion
+            for _bid, _blk in list(model.net.blocks.named_children()):
+                if hasattr(_blk, "_checkpoint_wrapped_module"):
+                    model.net.blocks.register_module(_bid, _blk._checkpoint_wrapped_module)
+            if hasattr(getattr(model.net, "head", None), "_checkpoint_wrapped_module"):
+                model.net.head = model.net.head._checkpoint_wrapped_module
+            model.net = torch.compile(model.net, backend="aot_eager", dynamic=True)
+            log.info("torch.compile applied to model.net (aot_eager, checkpoint wrappers removed)", rank0_only=True)
+            vae_encoder = model.tokenizer.model.model.encoder
+            model.tokenizer.model.model.encoder = torch.compile(vae_encoder, backend="aot_eager", dynamic=True)
+            log.info("torch.compile applied to VAE encoder", rank0_only=True)
         except Exception as e:
             log.info(f"torch.compile skipped: {e}", rank0_only=True)
     if args.context_parallel_size > 1:
@@ -793,27 +807,30 @@ if __name__ == "__main__":
             _wc.reset()
 
         # Step 3b: Generate zoom-out video
-        log.info(f"=== Generating ZOOM-OUT video ({args.zoom_out_trajectory} {args.zoom_out_direction} str={args.zoom_out_strength}, N={N_out}) ===", rank0_only=True)
-        result_out = _generate_one_direction(
-            model=model,
-            args=args,
-            img_bchw=img_bchw,
-            depth_hw=depth_hw,
-            mask_hw=mask_hw,
-            K_33=K_33,
-            t5_embeddings=t5,
-            neg_t5_embeddings=neg_t5,
-            trajectory=args.zoom_out_trajectory,
-            direction=args.zoom_out_direction,
-            strength=args.zoom_out_strength,
-            N=N_out,
-            da3_model=da3_model,
-            process_group=process_group,
-            log_prefix=f"{base_name}_zoom_out",
-            upward_shift=args.zoom_out_upward_shift,
-            ground_normal_cam=ground_normal,
-            zoom_out_upward_ratio=args.zoom_out_upward_ratio,
-        )
+        if getattr(args, "skip_zoom_out", False):
+            log.info("Skipping zoom-out (--skip_zoom_out)", rank0_only=True)
+            result_out = None
+        else:
+            result_out = _generate_one_direction(
+                model=model,
+                args=args,
+                img_bchw=img_bchw,
+                depth_hw=depth_hw,
+                mask_hw=mask_hw,
+                K_33=K_33,
+                t5_embeddings=t5,
+                neg_t5_embeddings=neg_t5,
+                trajectory=args.zoom_out_trajectory,
+                direction=args.zoom_out_direction,
+                strength=args.zoom_out_strength,
+                N=N_out,
+                da3_model=da3_model,
+                process_group=process_group,
+                log_prefix=f"{base_name}_zoom_out",
+                upward_shift=args.zoom_out_upward_shift,
+                ground_normal_cam=ground_normal,
+                zoom_out_upward_ratio=args.zoom_out_upward_ratio,
+            )
 
         if _wc is not None:
             _wc.log_stats(log)
