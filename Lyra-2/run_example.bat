@@ -13,7 +13,9 @@ for /f "tokens=*" %%p in ('python -c "import imageio_ffmpeg, os; print(os.path.d
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "Get-Date -Format HH:mm:ss"') do set START_TIME=%%t
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-Date).Ticks"') do set START_TICKS=%%t
 
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/samples --prompt_dir assets/samples --num_samples 15 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_example/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 480,832 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile
+:: --guidance default is 5.0; lower (e.g. 3.0) speeds up convergence at slight quality cost.
+:: Moot when --use_dmd is set since DMD distills away CFG entirely.
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/samples --prompt_dir assets/samples --num_samples 15 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_example/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 480,832 --offload_when_prompt --warp_chunk_size 4 --use_dmd --worldcache
 
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "Get-Date -Format HH:mm:ss"') do set END_TIME=%%t
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-Date).Ticks"') do set END_TICKS=%%t
