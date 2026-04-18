@@ -30,8 +30,9 @@ NVIDIA <br>
 ## News
 
 - 🚀 [April 15, 2026] Paper, model weights, and inference code are now publicly available!
+- 🚀 [April 17, 2026] 4-step DMD distillation LoRA is now available! See [Fast Inference with DMD Distillation](#fast-inference-with-dmd-distillation) for details.
 - 🔜 [Coming Soon] GUI for interactive scene generation.
-- 🔜 [Coming Soon] 4-step distillation LoRA.
+- ⏳ [Planned] Training code and data processing scripts.
 
 ## Installation
 
@@ -85,7 +86,7 @@ Outputs written to `outputs/zoomgs/<sample_id>/`:
 - The scale of the zoom-in and zoom-out trajectories can be adjusted via `--zoom_in_strength` and `--zoom_out_strength`. Note that a built-in collision detection mechanism prevents the camera from moving into objects, so increasing `--zoom_in_strength` may not always change the trajectory.
 - If the camera movement appears too fast, increase `--num_frames_zoom_in` or `--num_frames_zoom_out` to spread the motion over more frames. Frame counts must be of the form 1 + 80k (i.e., 81, 161, 241, …) to align with autoregressive chunk boundaries.
 
-**Runtime on 1× H100 80GB:** ~9 min per 80 frames.
+**Runtime on 1× H100 80GB:** ~9 min per 80 frames (~35s with `--use_dmd`).
 
 **Example outputs (Step 1 video generation | Step 2 GS reconstruction):**
 
@@ -101,7 +102,7 @@ For evaluating Lyra 2.0 on a custom, predefined camera trajectory, prepare your 
 - `trajectory.npz` — camera poses (`w2c`: N×4×4 world-to-camera matrices, `intrinsics`: N×3×3, `image_height`, `image_width`)
 - `captions.json` — per-chunk text captions keyed by frame index (e.g. `{"0": "...", "81": "...", ...}`)
 
-The script loads the first `--num_frames` poses from the trajectory file and runs FramePack AR generation. When `--captions_path` is provided with a multi-entry JSON, each AR chunk uses the caption whose frame index is closest to (but not exceeding) the current chunk start.
+The script loads the first `--num_frames` poses from the trajectory file and runs autoregressive generation. When `--captions_path` is provided with a multi-entry JSON, each chunk uses the caption whose frame index is closest to (but not exceeding) the current chunk start.
 
 ```bash
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -133,6 +134,19 @@ We will release our interactive GUI, an online captioning pipeline, and an instr
 
 <video src="https://github.com/user-attachments/assets/76394f4d-b6c7-46f2-8133-5eabf5fd74e1" autoplay controls loop muted playsinline preload="auto" width="360"></video>
 
+#### Fast Inference with DMD Distillation
+
+Pass `--use_dmd` to either video generation command (`lyra2_zoomgs_inference` or `lyra2_custom_traj_inference`) to enable the DMD distillation LoRA. This reduces sampling to 4 steps and distills away CFG, giving roughly a ~15× speedup.
+
+**Example outputs generated with `--use_dmd` on `custom_trajectory_examples/example_1` (Step 1 video generation | Step 2 GS reconstruction):**
+
+<table><tr>
+<td><video src="https://github.com/user-attachments/assets/8dad91a9-65f8-4dd2-89d4-22b068708df4" autoplay controls loop muted playsinline preload="auto" width="360"></video></td>
+<td><video src="https://github.com/user-attachments/assets/efaa1248-4283-46ae-b5e7-b7741cab116a" autoplay controls loop muted playsinline preload="auto" width="360"></video></td>
+</tr></table>
+
+> **Note:** DMD may weaken prompt following and sometimes produces scenes with repetitive patterns. For best quality and scale, we recommend running **without** `--use_dmd`.
+
 ### Step 2 — 3D Gaussian Splatting Reconstruction
 
 Lift the generated video to a 3D Gaussian Splatting scene using VIPE pose estimation and DA3 depth.
@@ -159,6 +173,9 @@ We thank the following open-source projects that this work builds upon:
 - [FramePack](https://github.com/lllyasviel/FramePack)
 - [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3)
 - [MoGe](https://github.com/microsoft/MoGe)
+- [Marble](https://marble.worldlabs.ai/)
+
+Some example input images included in `assets/` are sourced from the [Tanks and Temples](https://www.tanksandtemples.org/) benchmark and [Marble](https://marble.worldlabs.ai/) by World Labs. We thank the respective authors for making these resources available.
 
 ## Citation
 
