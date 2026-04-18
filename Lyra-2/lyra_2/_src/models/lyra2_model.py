@@ -707,6 +707,7 @@ class Lyra2Model(WANDiffusionModel):
         shift,
         t5_text_embeddings,
         neg_t5_text_embeddings,
+        ar_chunk=None,
         **kwargs,
     ):
         """DMD-distilled fast (4-step) inference. Mirrors :meth:`inference` but uses
@@ -853,12 +854,14 @@ class Lyra2Model(WANDiffusionModel):
                     ).unflatten(0, noise_pred.shape[:2])
                     latents = temp_x0.permute(0, 2, 1, 3, 4)
                     latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
-                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}: {time.time() - _t0:.1f}s", rank0_only=True)
+                _chunk_str = f" chunk={ar_chunk}" if ar_chunk is not None else ""
+                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}{_chunk_str}: {time.time() - _t0:.1f}s", rank0_only=True)
             else:
                 noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
                 latents = noise_pred
                 latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
-                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}: {time.time() - _t0:.1f}s", rank0_only=True)
+                _chunk_str = f" chunk={ar_chunk}" if ar_chunk is not None else ""
+                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}{_chunk_str}: {time.time() - _t0:.1f}s", rank0_only=True)
                 break
 
         # 8) Return only the newly generated latent chunk

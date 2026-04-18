@@ -816,6 +816,7 @@ class Lyra2InferencePipeline:
                 last_hist_frame=last_hist_frame_cast,
                 fps=self.fps,
                 padding_mask=padding_mask_cast,
+                ar_chunk=self.ar_idx,
             )
         gen_chunk = gen_chunk[:, :, :self.model.framepack_num_new_latent_frames]
         new_generated_frames = _decode_new_latent_chunk(

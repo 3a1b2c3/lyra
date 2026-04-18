@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from typing import IO, Any, Dict, Tuple
 
 import imageio
@@ -155,10 +156,13 @@ class ImageioVideoHandler(BaseFileHandler):
             "fps": fps,
             "quality": quality,
             "macro_block_size": 1,
-            "codec": "libx264",
             "ffmpeg_params": final_ffmpeg_params,
             "output_params": ["-f", "mp4"],
         }
+        if sys.platform == "win32":
+            # On Windows, imageio_ffmpeg's auto-detection of h264 encoders has a subprocess
+            # threading bug; hardcode libx264 to bypass it.
+            mimsave_kwargs["codec"] = "libx264"
         # Update with any other kwargs
         mimsave_kwargs.update(kwargs)
         log.debug(f"mimsave_kwargs: {mimsave_kwargs}")
