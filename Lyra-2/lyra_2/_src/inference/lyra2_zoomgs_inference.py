@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import gc
 import os
-import platform
 from typing import List, Tuple
 
 import cv2
@@ -588,14 +587,11 @@ if __name__ == "__main__":
         )
 
     if getattr(args, "torch_compile", False):
-        if platform.system() == "Windows":
-            log.info("torch.compile skipped — not supported on Windows (no Triton)", rank0_only=True)
-        else:
-            try:
-                model.net = torch.compile(model.net, mode="reduce-overhead", dynamic=True)
-                log.info("torch.compile applied to model.net", rank0_only=True)
-            except Exception as e:
-                log.info(f"torch.compile skipped: {e}", rank0_only=True)
+        try:
+            model.net = torch.compile(model.net, mode="reduce-overhead", dynamic=True)
+            log.info("torch.compile applied to model.net", rank0_only=True)
+        except Exception as e:
+            log.info(f"torch.compile skipped: {e}", rank0_only=True)
     if args.context_parallel_size > 1:
         model.net.enable_context_parallel(process_group)
 
