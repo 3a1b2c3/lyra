@@ -58,9 +58,11 @@ except ImportError:
             self._dropout = attention_dropout
 
         def forward(self, q, k, v, **kwargs):
-            # bshd -> bhsd for SDPA
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            with _sdpa_kernel(backends=[SDPBackend.CUDNN_ATTENTION]):
+            # bshd -> bhsd; contiguous() required for cuDNN kernel dispatch
+            q = q.transpose(1, 2).contiguous()
+            k = k.transpose(1, 2).contiguous()
+            v = v.transpose(1, 2).contiguous()
+            with _sdpa_kernel(backends=[SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
                 out = torch.nn.functional.scaled_dot_product_attention(
                     q, k, v, dropout_p=self._dropout if self.training else 0.0
                 )
