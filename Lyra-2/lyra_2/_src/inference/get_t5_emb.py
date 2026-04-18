@@ -431,8 +431,17 @@ def _t5(name, encoder_only=False, decoder_only=False, dtype=torch.float32, devic
     else:
         model_cls = T5Model
 
-    with torch.device(device):
-        model = model_cls(**kwargs)
+    # Skip random weight init — weights are loaded from checkpoint immediately after.
+    _orig_emb_reset = torch.nn.Embedding.reset_parameters
+    _orig_lin_reset = torch.nn.Linear.reset_parameters
+    torch.nn.Embedding.reset_parameters = lambda self: None
+    torch.nn.Linear.reset_parameters = lambda self: None
+    try:
+        with torch.device(device):
+            model = model_cls(**kwargs)
+    finally:
+        torch.nn.Embedding.reset_parameters = _orig_emb_reset
+        torch.nn.Linear.reset_parameters = _orig_lin_reset
 
     model = model.to(dtype=dtype, device=device)
     return model

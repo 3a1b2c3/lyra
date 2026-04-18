@@ -51,7 +51,7 @@ from lyra_2._src.inference.camera_traj_utils import (
 from lyra_2._src.utils.model_loader import load_model_from_checkpoint
 
 torch.enable_grad(False)
-torch.backends.cudnn.enabled = False
+torch.set_float32_matmul_precision("high")
 
 # ---------------------------------------------------------------------------
 # DA3 single-image depth (reused from lyra2_ar_inference_from_image)
@@ -234,6 +234,9 @@ def parse_arguments() -> argparse.Namespace:
                         help="Number of leading blocks always executed per step (default: 4).")
     parser.add_argument("--worldcache_drift_threshold", type=float, default=0.10,
                         help="L2 drift threshold below which remaining blocks are skipped (default: 0.10).")
+
+    parser.add_argument("--log_file", type=str, default=None,
+                        help="Also write all log output to this file (in addition to stdout).")
 
     # Misc flags needed by run_lyra2_sample internals
     parser.add_argument("--ablate_same_t5", action="store_true")
@@ -502,6 +505,11 @@ if __name__ == "__main__":
     args = parse_arguments()
     _apply_dmd_defaults(args)
 
+    if args.log_file:
+        from lyra_2._ext.imaginaire.utils.log import logger as _loguru_logger
+        os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
+        _loguru_logger.add(args.log_file, mode="w", format="{time:HH:mm:ss} {message}", enqueue=True)
+
     process_group = None
     if args.context_parallel_size > 1:
         import imaginaire
@@ -554,6 +562,19 @@ if __name__ == "__main__":
     assert not getattr(model.config, "use_hd_map_cond", False)
 
     model.eval()
+
+    # Verify attention backend (catches silent MATH fallback before the long inference run).
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel as _sdpa_kernel
+        _q = torch.randn(1, 8, 64, 128, device=desired_device, dtype=desired_dtype)
+        _k = torch.randn(1, 8, 64, 128, device=desired_device, dtype=desired_dtype)
+        _v = torch.randn(1, 8, 64, 128, device=desired_device, dtype=desired_dtype)
+        with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            _ = torch.nn.functional.scaled_dot_product_attention(_q, _k, _v)
+        log.info("Attention backend check: fast SDPA available (FA3/cuDNN/efficient)", rank0_only=True)
+        del _q, _k, _v
+    except Exception as _e:
+        log.warning(f"Fast attention backend unavailable: {_e} — will fall back to MATH (SLOW)", rank0_only=True)
 
     if getattr(args, "worldcache", False):
         from lyra_2._src.modules.worldcache import WorldCacheState

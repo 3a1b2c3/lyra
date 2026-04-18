@@ -657,6 +657,7 @@ class Lyra2Model(WANDiffusionModel):
         latents = init_latents
         _n_steps = len(timesteps)
         _t0 = time.time()
+        log.info(f"denoising start ({_n_steps} steps)", rank0_only=True)
         for _i, t in enumerate(timesteps):
             latent_model_input = latents
             timestep = torch.stack([t])
@@ -769,7 +770,9 @@ class Lyra2Model(WANDiffusionModel):
 
         # 3) Build condition / uncondition (uncondition unused in DMD path but required by conditioner API)
         is_image_batch = False
+        log.info("conditioner: start", rank0_only=True)
         condition, uncondition = self.conditioner.get_condition_with_negative_prompt(data_batch)
+        log.info("conditioner: done", rank0_only=True)
         condition = condition.edit_data_type(DataType.IMAGE if is_image_batch else DataType.VIDEO)
         uncondition = uncondition.edit_data_type(DataType.IMAGE if is_image_batch else DataType.VIDEO)
 
@@ -825,7 +828,9 @@ class Lyra2Model(WANDiffusionModel):
         exit_flag = len(denoising_step_list) - 1
 
         latents = init_latents
+        log.info(f"denoising start ({len(denoising_step_list)} steps, DMD)", rank0_only=True)
         for index, current_timestep in enumerate(denoising_step_list):
+            _t0 = time.time()
             latent_model_input = latents
             timestep = torch.stack([current_timestep]).to(self.tensor_kwargs["device"])
 
@@ -848,10 +853,12 @@ class Lyra2Model(WANDiffusionModel):
                     ).unflatten(0, noise_pred.shape[:2])
                     latents = temp_x0.permute(0, 2, 1, 3, 4)
                     latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
+                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}: {time.time() - _t0:.1f}s", rank0_only=True)
             else:
                 noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
                 latents = noise_pred
                 latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
+                log.info(f"DMD step {index + 1}/{len(denoising_step_list)}: {time.time() - _t0:.1f}s", rank0_only=True)
                 break
 
         # 8) Return only the newly generated latent chunk
