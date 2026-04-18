@@ -6,6 +6,11 @@ call ..\.venv\Scripts\activate.bat
 set PYTHONPATH=%~dp0
 set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+:: MSVC required for VIPE CUDA JIT extension
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" >nul 2>&1
+set CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8
+set PATH=%CUDA_HOME%\bin;%PATH%
+
 :: Usage: run_recon.bat <video_path> [output_dir]
 :: Example: run_recon.bat my_video.mp4
 :: Example: run_recon.bat my_video.mp4 outputs/my_scene
