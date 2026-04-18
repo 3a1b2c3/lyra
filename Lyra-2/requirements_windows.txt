@@ -5,8 +5,5 @@
 # Source: https://github.com/mjun0812/flash-attention-prebuild-wheels
 flash_attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.4.10/flash_attn-2.8.2+cu128torch2.7-cp312-cp312-win_amd64.whl
 
-# INT8-quantized attention — pre-built Windows wheel (cu128, torch 2.8, cp312)
-sageattention @ https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post3/sageattention-2.2.0+cu128torch2.7.1.post3-cp39-abi3-win_amd64.whl
-
 # Triton Windows binaries — required for torch.compile (standard triton stub doesn't work on Windows)
 triton-windows
