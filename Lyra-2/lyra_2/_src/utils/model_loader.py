@@ -16,6 +16,11 @@
 
 import importlib
 import os
+import pathlib
+import platform
+
+if platform.system() == "Windows":
+    pathlib.PosixPath = pathlib.WindowsPath
 
 import torch
 import torch.distributed.checkpoint as dcp

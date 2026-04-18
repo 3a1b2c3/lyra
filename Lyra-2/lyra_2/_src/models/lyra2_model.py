@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, List, cast
 import random
+import time
 from statistics import NormalDist
 import numpy as np
 import torch
@@ -654,9 +655,14 @@ class Lyra2Model(WANDiffusionModel):
         seed_g.manual_seed(seed if seed is not None else 0)
 
         latents = init_latents
-        for _, t in enumerate(timesteps):
+        _n_steps = len(timesteps)
+        _t0 = time.time()
+        for _i, t in enumerate(timesteps):
             latent_model_input = latents
             timestep = torch.stack([t])
+            _elapsed = time.time() - _t0
+            _eta = (_elapsed / _i * (_n_steps - _i)) if _i > 0 else float("nan")
+            log.info(f"denoising step {_i+1}/{_n_steps}  elapsed={_elapsed:.0f}s  eta={_eta:.0f}s", rank0_only=True)
             velocity_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
             temp_x0 = self.sample_scheduler.step(
                 velocity_pred.unsqueeze(0),
@@ -725,12 +731,17 @@ class Lyra2Model(WANDiffusionModel):
         if cp_group is not None:
             latents = broadcast(latents.contiguous(), cp_group)
 
-        for _, t in enumerate(timesteps):
+        _n_steps = len(timesteps)
+        _t0 = time.time()
+        for _i, t in enumerate(timesteps):
             latent_model_input = latents
             timestep = [t]
 
             timestep = torch.stack(timestep)
 
+            _elapsed = time.time() - _t0
+            _eta = (_elapsed / _i * (_n_steps - _i)) if _i > 0 else float("nan")
+            log.info(f"denoising step {_i+1}/{_n_steps}  elapsed={_elapsed:.0f}s  eta={_eta:.0f}s", rank0_only=True)
             noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
             temp_x0 = self.sample_scheduler.step(
                 noise_pred.unsqueeze(0),

@@ -26,8 +26,18 @@ from einops import rearrange, repeat
 
 try:
     from flash_attn.layers.rotary import apply_rotary_emb as flash_apply_rotary_emb
-except ImportError:
-    flash_apply_rotary_emb = None
+except (ImportError, ModuleNotFoundError):
+    def flash_apply_rotary_emb(x, cos, sin, interleaved=True, inplace=False):
+        # x: [batch, seq, heads, head_dim], cos/sin: [seq, head_dim//2]
+        cos = cos.unsqueeze(0).unsqueeze(2)
+        sin = sin.unsqueeze(0).unsqueeze(2)
+        if interleaved:
+            x1, x2 = x[..., 0::2], x[..., 1::2]
+            out = torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
+            return out.flatten(-2)
+        h = x.shape[-1] // 2
+        x1, x2 = x[..., :h], x[..., h:]
+        return torch.cat([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
 
 from torch.distributed import ProcessGroup, get_process_group_ranks
 from torch.distributed._composable.fsdp import fully_shard
@@ -36,10 +46,10 @@ from torchvision import transforms
 try:
     from transformer_engine.pytorch.attention import DotProductAttention
 except ImportError:
-    import torch.nn.functional as _F
+    from torch.nn.attention import SDPBackend, sdpa_kernel as _sdpa_kernel
 
     class DotProductAttention(nn.Module):
-        """PyTorch SDPA fallback when transformer_engine is unavailable (e.g. Windows)."""
+        """cuDNN SDPA fallback when transformer_engine is unavailable (e.g. Windows)."""
 
         def __init__(self, num_heads, head_dim, num_gqa_groups=None,
                      attention_dropout=0.0, qkv_format="bshd",
@@ -48,12 +58,13 @@ except ImportError:
             self._dropout = attention_dropout
 
         def forward(self, q, k, v, **kwargs):
-            # Input/output: (B, S, H, D) — bshd format
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)  # bhsd
-            out = _F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self._dropout if self.training else 0.0
-            )
-            return out.transpose(1, 2)  # back to bshd
+            # bshd -> bhsd for SDPA
+            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+            with _sdpa_kernel(backends=[SDPBackend.CUDNN_ATTENTION]):
+                out = torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self._dropout if self.training else 0.0
+                )
+            return out.transpose(1, 2)
 
 from lyra_2._ext.imaginaire.utils import log
 from lyra_2._src.callbacks.model_weights_stats import WeightTrainingStat
