@@ -155,6 +155,7 @@ class ImageioVideoHandler(BaseFileHandler):
             "fps": fps,
             "quality": quality,
             "macro_block_size": 1,
+            "codec": "libx264",
             "ffmpeg_params": final_ffmpeg_params,
             "output_params": ["-f", "mp4"],
         }
