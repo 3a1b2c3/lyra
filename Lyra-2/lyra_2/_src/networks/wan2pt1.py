@@ -47,16 +47,8 @@ try:
     from transformer_engine.pytorch.attention import DotProductAttention
 except ImportError:
     from torch.nn.attention import SDPBackend, sdpa_kernel as _sdpa_kernel
-    try:
-        from sageattention import sageattn as _sageattn
-        _USE_SAGE = True
-    except ImportError:
-        _USE_SAGE = False
-
-    _ATTN_BRANCH_LOGGED = False
-
     class DotProductAttention(nn.Module):
-        """SageAttention (INT8 quantized) when available, else cuDNN SDPA fallback."""
+        """cuDNN/Flash attention via SDPA."""
 
         def __init__(self, num_heads, head_dim, num_gqa_groups=None,
                      attention_dropout=0.0, qkv_format="bshd",
@@ -65,24 +57,14 @@ except ImportError:
             self._dropout = attention_dropout
 
         def forward(self, q, k, v, **kwargs):
-            global _ATTN_BRANCH_LOGGED
             # bshd -> bhsd
             q = q.transpose(1, 2).contiguous()
             k = k.transpose(1, 2).contiguous()
             v = v.transpose(1, 2).contiguous()
-            if _USE_SAGE and not self.training:
-                if not _ATTN_BRANCH_LOGGED:
-                    print(f"[DotProductAttention] using SageAttention | q shape {q.shape}", flush=True)
-                    _ATTN_BRANCH_LOGGED = True
-                out = _sageattn(q, k, v)
-            else:
-                if not _ATTN_BRANCH_LOGGED:
-                    print(f"[DotProductAttention] using SDPA | _USE_SAGE={_USE_SAGE} training={self.training} | q shape {q.shape}", flush=True)
-                    _ATTN_BRANCH_LOGGED = True
-                with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
-                    out = torch.nn.functional.scaled_dot_product_attention(
-                        q, k, v, dropout_p=self._dropout if self.training else 0.0
-                    )
+            with _sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+                out = torch.nn.functional.scaled_dot_product_attention(
+                    q, k, v, dropout_p=self._dropout if self.training else 0.0
+                )
             return out.transpose(1, 2)
 
 from lyra_2._ext.imaginaire.utils import log

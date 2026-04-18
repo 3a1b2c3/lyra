@@ -182,6 +182,8 @@ def parse_arguments() -> argparse.Namespace:
     # Camera trajectory for zoom
     parser.add_argument("--skip_zoom_out", action="store_true",
                         help="Skip zoom-out generation. Output is zoom-in only (~2x faster per sample).")
+    parser.add_argument("--reverse_zoom_out", action="store_true",
+                        help="Use time-reversed zoom-in as zoom-out. Zero extra compute, ~30 min faster per sample. Best for static scenes.")
     parser.add_argument("--zoom_in_trajectory", type=str, default="horizontal_zoom",
                         choices=list(CAMERA_TRAJECTORY_CHOICES),
                         help="Camera trajectory for zoom-in video.")
@@ -810,6 +812,10 @@ if __name__ == "__main__":
         if getattr(args, "skip_zoom_out", False):
             log.info("Skipping zoom-out (--skip_zoom_out)", rank0_only=True)
             result_out = None
+        elif getattr(args, "reverse_zoom_out", False):
+            log.info("Reverse zoom-out: using time-reversed zoom-in (--reverse_zoom_out)", rank0_only=True)
+            # Store un-flipped zoom-in; line 863 flips it again → reversed zoom-in in combined video
+            result_out = {"video": result_in["video"]} if result_in is not None else None
         else:
             result_out = _generate_one_direction(
                 model=model,
