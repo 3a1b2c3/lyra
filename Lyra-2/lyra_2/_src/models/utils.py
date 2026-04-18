@@ -203,6 +203,31 @@ def _convert_non_diffusers_wan_lora_to_diffusers(state_dict, adapter_name="defau
             if original_key in original_state_dict:
                 converted_state_dict[converted_key] = original_state_dict.pop(original_key)
 
+        # Lyra2-specific: cam_encoder, buffer_encoder.{0,1}
+        for o in ["cam_encoder", "buffer_encoder.0", "buffer_encoder.1"]:
+            original_key = f"blocks.{i}.{o}.{lora_down_key}.weight"
+            converted_down_key = f"blocks.{i}.{o}.lora_A.{adapter_name}.weight"
+            if original_key in original_state_dict:
+                converted_state_dict[converted_down_key] = original_state_dict.pop(original_key)
+
+            original_key = f"blocks.{i}.{o}.{lora_up_key}.weight"
+            converted_up_key = f"blocks.{i}.{o}.lora_B.{adapter_name}.weight"
+            if original_key in original_state_dict:
+                converted_state_dict[converted_up_key] = original_state_dict.pop(original_key)
+
+            alpha_key = f"blocks.{i}.{o}.alpha"
+            if alpha_key in original_state_dict:
+                down_weight = converted_state_dict[converted_down_key]
+                up_weight = converted_state_dict[converted_up_key]
+                scale_down, scale_up = get_alpha_scales(down_weight, f"blocks.{i}.{o}")
+                converted_state_dict[converted_down_key] = down_weight * scale_down
+                converted_state_dict[converted_up_key] = up_weight * scale_up
+
+            original_key = f"blocks.{i}.{o}.diff_b"
+            converted_key = f"blocks.{i}.{o}.lora_B.{adapter_name}.bias"
+            if original_key in original_state_dict:
+                converted_state_dict[converted_key] = original_state_dict.pop(original_key)
+
     # Remaining.
     if original_state_dict:
         if any("time_projection" in k for k in original_state_dict):
@@ -281,6 +306,60 @@ def _convert_non_diffusers_wan_lora_to_diffusers(state_dict, adapter_name="defau
                         converted_state_dict[f"{diffusers_name}.{diffusers_b_n}.lora_B.{adapter_name}.bias"] = (
                             original_state_dict.pop(f"{text_time}.{b_n}.diff_b")
                         )
+
+        # Lyra2-specific: top-level patch_embedding
+        if any("patch_embedding" in k and "clean_patch_embeddings" not in k for k in original_state_dict):
+            lora_name = "patch_embedding"
+            diffusers_name = lora_name
+            original_key = f"{lora_name}.{lora_down_key}.weight"
+            if original_key in original_state_dict:
+                converted_state_dict[f"{diffusers_name}.lora_A.{adapter_name}.weight"] = original_state_dict.pop(
+                    original_key
+                )
+            original_key = f"{lora_name}.{lora_up_key}.weight"
+            if original_key in original_state_dict:
+                converted_state_dict[f"{diffusers_name}.lora_B.{adapter_name}.weight"] = original_state_dict.pop(
+                    original_key
+                )
+            alpha_key = f"{lora_name}.alpha"
+            if alpha_key in original_state_dict:
+                down_weight = converted_state_dict[f"{diffusers_name}.lora_A.{adapter_name}.weight"]
+                up_weight = converted_state_dict[f"{diffusers_name}.lora_B.{adapter_name}.weight"]
+                scale_down, scale_up = get_alpha_scales(down_weight, f"{lora_name}")
+                converted_state_dict[f"{diffusers_name}.lora_A.{adapter_name}.weight"] = down_weight * scale_down
+                converted_state_dict[f"{diffusers_name}.lora_B.{adapter_name}.weight"] = up_weight * scale_up
+            if f"{lora_name}.diff_b" in original_state_dict:
+                converted_state_dict[f"{diffusers_name}.lora_B.{adapter_name}.bias"] = original_state_dict.pop(
+                    f"{lora_name}.diff_b"
+                )
+
+        # Lyra2-specific: clean_patch_embeddings.{0..5}
+        for cp_idx in range(6):
+            lora_name = f"clean_patch_embeddings.{cp_idx}"
+            if any(lora_name in k for k in original_state_dict):
+                diffusers_name = lora_name
+                original_key = f"{lora_name}.{lora_down_key}.weight"
+                converted_down_key = f"{diffusers_name}.lora_A.{adapter_name}.weight"
+                if original_key in original_state_dict:
+                    converted_state_dict[converted_down_key] = original_state_dict.pop(original_key)
+
+                original_key = f"{lora_name}.{lora_up_key}.weight"
+                converted_up_key = f"{diffusers_name}.lora_B.{adapter_name}.weight"
+                if original_key in original_state_dict:
+                    converted_state_dict[converted_up_key] = original_state_dict.pop(original_key)
+
+                alpha_key = f"{lora_name}.alpha"
+                if alpha_key in original_state_dict:
+                    down_weight = converted_state_dict[converted_down_key]
+                    up_weight = converted_state_dict[converted_up_key]
+                    scale_down, scale_up = get_alpha_scales(down_weight, f"{lora_name}")
+                    converted_state_dict[converted_down_key] = down_weight * scale_down
+                    converted_state_dict[converted_up_key] = up_weight * scale_up
+
+                if f"{lora_name}.diff_b" in original_state_dict:
+                    converted_state_dict[f"{diffusers_name}.lora_B.{adapter_name}.bias"] = original_state_dict.pop(
+                        f"{lora_name}.diff_b"
+                    )
 
         for img_ours, img_theirs in [
             ("img_emb.proj.1", "img_emb.proj.1"),

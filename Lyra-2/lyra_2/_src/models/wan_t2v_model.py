@@ -157,6 +157,8 @@ class WANDiffusionModel(ImaginaireModel):
         self.sample_scheduler = FlowUniPCMultistepScheduler(
             num_train_timesteps=1000, shift=1, use_dynamic_shifting=False
         )
+        # Lazily-initialized flow-matching scheduler for DMD distillation (4-step) inference.
+        self.dmd_scheduler = None
 
         # 3. tokenizer
         with misc.timer("DiffusionModel: set_up_tokenizer"):
@@ -378,6 +380,9 @@ class WANDiffusionModel(ImaginaireModel):
             state_dict = _convert_musubi_wan_lora_to_non_diffusers_wan(state_dict)
         # remove the prefix of the state dict
         state_dict = {k.replace("diffusion_model.", ""): v for k, v in state_dict.items()}
+        # strip leading "net." prefix: load_lora_weights injects into `self.net`,
+        # so the LoRA keys must be relative to `self.net` (not the full model).
+        state_dict = {k[len("net.") :] if k.startswith("net.") else k: v for k, v in state_dict.items()}
 
         if not skip_inject:
             target_modules = list({name.split(".lora")[0] for name in state_dict.keys()})

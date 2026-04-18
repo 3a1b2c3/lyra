@@ -218,6 +218,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--da3_predicted_pose_continuation", action="store_true",
                         help="Apply DA3-predicted pose alignment for continuation segments.")
 
+    # DMD distillation (4-step fast inference)
+    parser.add_argument("--use_dmd", action="store_true",
+                        help="Enable DMD fast inference: loads DMD distillation LoRA, "
+                             "activates DMD scheduler, and reduces sampling steps.")
+
     # Misc flags needed by run_lyra2_sample internals
     parser.add_argument("--ablate_same_t5", action="store_true")
     parser.add_argument("--use_dmd_scheduler", action="store_true")
@@ -456,8 +461,34 @@ def _generate_one_direction(
 # Main
 # ---------------------------------------------------------------------------
 
+DMD_LORA_PATH = "checkpoints/lora/dmd_distillation.safetensors"
+DMD_LORA_WEIGHT = 1.0
+
+
+def _apply_dmd_defaults(args):
+    """When --use_dmd is set, inject the DMD LoRA and switch to the DMD scheduler.
+
+    Note: the DMD scheduler uses a fixed 4-step denoising list internally, so
+    ``--num_sampling_step`` is ignored in this code path.
+    """
+    if not args.use_dmd:
+        return
+    args.use_dmd_scheduler = True
+    if args.lora_paths is None:
+        args.lora_paths = []
+    if args.lora_weights is None:
+        args.lora_weights = []
+    args.lora_paths.append(DMD_LORA_PATH)
+    args.lora_weights.append(DMD_LORA_WEIGHT)
+    log.info(
+        f"[DMD] Enabled: lora={DMD_LORA_PATH}, scheduler=dmd (4 fixed steps)",
+        rank0_only=True,
+    )
+
+
 if __name__ == "__main__":
     args = parse_arguments()
+    _apply_dmd_defaults(args)
 
     process_group = None
     if args.context_parallel_size > 1:
