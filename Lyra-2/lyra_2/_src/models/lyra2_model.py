@@ -670,6 +670,187 @@ class Lyra2Model(WANDiffusionModel):
         # 8) Return only the newly generated latent chunk
         return latents[:, :, T_hist:]
 
+    def _convert_flow_pred_to_x0(
+        self, scheduler, flow_pred: torch.Tensor, xt: torch.Tensor, timestep: torch.Tensor
+    ) -> torch.Tensor:
+        """Convert flow-matching prediction (noise - x0) to x0 prediction.
+
+        x_t = (1 - sigma_t) * x0 + sigma_t * noise, pred = noise - x0
+          => x0 = x_t - sigma_t * pred
+        """
+        original_dtype = flow_pred.dtype
+        flow_pred, xt, sigmas, timesteps = map(
+            lambda x: x.double().to(flow_pred.device),
+            [flow_pred, xt, scheduler.sigmas, scheduler.timesteps],
+        )
+        timestep_id = torch.argmin(
+            (timesteps.unsqueeze(0) - timestep.unsqueeze(1)).abs(), dim=1
+        )
+        sigma_t = sigmas[timestep_id].reshape(-1, 1, 1, 1)
+        x0_pred = xt - sigma_t * flow_pred
+        return x0_pred.to(original_dtype)
+
+    def inference_dmd(
+        self,
+        history_latents,
+        cond_latent,
+        guidance,
+        seed,
+        num_steps,
+        shift,
+        t5_text_embeddings,
+        neg_t5_text_embeddings,
+        **kwargs,
+    ):
+        """DMD-distilled fast (4-step) inference. Mirrors :meth:`inference` but uses
+        a fixed 4-step flow-matching schedule and does not run CFG (the distilled
+        LoRA is already conditional-only).
+        """
+        # 0) Create DMD flow scheduler (4-step schedule over 1000 train timesteps)
+        denoising_step_list: List[int] = [1000, 750, 500, 250]
+        num_train_timestep: int = 1000
+        if self.dmd_scheduler is None:
+            from lyra_2._src.schedulers.self_forcing_scheduler import FlowMatchScheduler
+
+            self.dmd_scheduler = FlowMatchScheduler(
+                shift=5.0, sigma_min=0.0, extra_one_step=True
+            )
+            self.dmd_scheduler.set_timesteps(num_train_timestep, training=True)
+            self.dmd_scheduler.timesteps = self.dmd_scheduler.timesteps.to(history_latents.device)
+            self.denoising_step_list = torch.LongTensor(denoising_step_list)
+            timesteps = torch.cat(
+                (
+                    self.dmd_scheduler.timesteps.cpu(),
+                    torch.tensor([0], dtype=torch.float32),
+                )
+            )
+            self.denoising_step_list = timesteps[num_train_timestep - self.denoising_step_list]
+
+        # 1) Validate history latent length
+        T_hist_expected = self.framepack_total_max_num_latent_frames - self.framepack_num_new_latent_frames
+        assert (
+            history_latents.shape[2] == T_hist_expected
+        ), f"history_latents has T={history_latents.shape[2]} but expected {T_hist_expected}"
+
+        # 2) Build conditioner inputs
+        assert (
+            "last_hist_frame" in kwargs
+        ), "last_hist_frame (pixel) is required in kwargs for Lyra2 inference"
+        last_hist_frame = kwargs["last_hist_frame"]
+
+        data_batch = {
+            "t5_text_embeddings": t5_text_embeddings,
+            "neg_t5_text_embeddings": neg_t5_text_embeddings,
+            "last_hist_frame": last_hist_frame,
+        }
+
+        B, C, T_hist, H, W = history_latents.shape
+        T_new = self.framepack_num_new_latent_frames
+        assert cond_latent.shape[2] == T_hist + T_new, "cond_latent must have T_hist + T_new frames"
+
+        mask = kwargs.get("cond_latent_mask", None)
+        if mask is None:
+            mask = torch.ones((B, 4, T_hist + T_new, H, W), dtype=history_latents.dtype, device=history_latents.device)
+
+        data_batch["cond_latent_mask"] = mask
+        data_batch[WAN2PT1_I2V_COND_LATENT_KEY] = cond_latent
+        data_batch["cond_latent_buffer"] = kwargs.get("cond_latent_buffer", None)
+
+        if "fps" in kwargs and kwargs["fps"] is not None:
+            data_batch["fps"] = kwargs["fps"]
+        if "padding_mask" in kwargs and kwargs["padding_mask"] is not None:
+            data_batch["padding_mask"] = kwargs["padding_mask"]
+
+        # 3) Build condition / uncondition (uncondition unused in DMD path but required by conditioner API)
+        is_image_batch = False
+        condition, uncondition = self.conditioner.get_condition_with_negative_prompt(data_batch)
+        condition = condition.edit_data_type(DataType.IMAGE if is_image_batch else DataType.VIDEO)
+        uncondition = uncondition.edit_data_type(DataType.IMAGE if is_image_batch else DataType.VIDEO)
+
+        # 4) Init latents: keep history clean, random noise on generated region
+        init_latents = torch.zeros(
+            (B, C, T_hist + T_new, H, W), dtype=torch.float32, device=self.tensor_kwargs["device"]
+        )
+        init_latents[:, :, :T_hist] = history_latents.to(
+            dtype=torch.float32, device=self.tensor_kwargs["device"]
+        )
+        gen_shape = (B, C, T_new, H, W)
+        gen_noise = misc.arch_invariant_rand(
+            gen_shape,
+            torch.float32,
+            self.tensor_kwargs["device"],
+            seed if seed is not None else 0,
+        )
+        init_latents[:, :, T_hist:] = gen_noise
+
+        # 5) CP broadcast
+        cp_group = self.get_context_parallel_group()
+        if cp_group is not None:
+            init_latents = broadcast(init_latents.contiguous(), cp_group)
+            condition = condition.broadcast(cp_group)
+            uncondition = uncondition.broadcast(cp_group)
+        else:
+            assert not getattr(self.net, "is_context_parallel_enabled", False), (
+                "context parallel should be disabled if parallel_state is not initialized"
+            )
+
+        # 6) x0 prediction function (no CFG: distilled LoRA is conditional-only)
+        def x0_fn(noise_x: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+            flow_pred = self.denoise(noise_x, timestep, condition)  # B, C, T, H, W
+            flow_full = torch.zeros_like(noise_x, dtype=flow_pred.dtype)
+            flow_full[:, :, T_hist:] = flow_pred
+            flow_full = flow_full.permute(0, 2, 1, 3, 4)  # B, T, C, H, W
+            noisy_image_or_video = noise_x.permute(0, 2, 1, 3, 4)
+
+            pred_x0 = self._convert_flow_pred_to_x0(
+                scheduler=self.dmd_scheduler,
+                flow_pred=flow_full.flatten(0, 1),
+                xt=noisy_image_or_video.flatten(0, 1),
+                timestep=timestep.flatten(0, 1),
+            ).unflatten(0, flow_full.shape[:2])
+
+            return pred_x0.permute(0, 2, 1, 3, 4)  # back to B, C, T, H, W
+
+        # 7) Sampling loop (4-step)
+        seed_g = torch.Generator(device=self.tensor_kwargs["device"])
+        seed_g.manual_seed(seed if seed is not None else 0)
+
+        denoising_step_list = self.denoising_step_list
+        exit_flag = len(denoising_step_list) - 1
+
+        latents = init_latents
+        for index, current_timestep in enumerate(denoising_step_list):
+            latent_model_input = latents
+            timestep = torch.stack([current_timestep]).to(self.tensor_kwargs["device"])
+
+            if index < exit_flag:
+                with torch.no_grad():
+                    noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))  # B, C, T, H, W
+                    noise_pred = noise_pred.permute(0, 2, 1, 3, 4)  # B, T, C, H, W
+                    next_timestep = denoising_step_list[index + 1]
+                    new_noise = torch.randn_like(noise_pred.flatten(0, 1))
+                    if cp_group is not None:
+                        new_noise = broadcast(new_noise.contiguous(), cp_group)
+                    temp_x0 = self.dmd_scheduler.add_noise(
+                        noise_pred.flatten(0, 1),
+                        new_noise,
+                        next_timestep * torch.ones(
+                            [noise_pred.shape[0] * noise_pred.shape[1]],
+                            device=noise_pred.device,
+                            dtype=torch.long,
+                        ),
+                    ).unflatten(0, noise_pred.shape[:2])
+                    latents = temp_x0.permute(0, 2, 1, 3, 4)
+                    latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
+            else:
+                noise_pred = x0_fn(latent_model_input, timestep.unsqueeze(0))
+                latents = noise_pred
+                latents[:, :, :T_hist] = latent_model_input[:, :, :T_hist]
+                break
+
+        # 8) Return only the newly generated latent chunk
+        return latents[:, :, T_hist:]
+
     @torch.no_grad()
     def generate_samples_from_batch(
         self,
