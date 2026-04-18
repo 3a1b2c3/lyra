@@ -995,8 +995,22 @@ class Lyra2WanModel(WeightTrainingStat):
             )
 
         x_B_L_D = x_tokens
-        for block in self.blocks:
-            x_B_L_D = block(x_B_L_D, **kwargs_blocks)
+        _wc = getattr(self, "_worldcache", None)
+        if _wc is not None:
+            from lyra_2._src.modules.worldcache import run_blocks_worldcache
+            x_B_L_D = run_blocks_worldcache(
+                x_B_L_D,
+                self.blocks,
+                kwargs_blocks,
+                state=_wc,
+                is_uncond=is_uncond,
+                t_scalar=t_B[0].item(),
+                probe_depth=getattr(self, "_worldcache_probe_depth", 4),
+                drift_threshold=getattr(self, "_worldcache_drift_threshold", 0.10),
+            )
+        else:
+            for block in self.blocks:
+                x_B_L_D = block(x_B_L_D, **kwargs_blocks)
 
         x_B_L_D = self.head(x_B_L_D, e_B_D)
 

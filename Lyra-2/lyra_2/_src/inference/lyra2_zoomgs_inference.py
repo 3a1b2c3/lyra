@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import gc
 import os
+import platform
 from typing import List, Tuple
 
 import cv2
@@ -176,6 +177,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--lora_weights", type=float, nargs="+", default=[0.4, 0.4])
     parser.add_argument("--offload", action="store_true")
     parser.add_argument("--offload_when_prompt", action="store_true")
+    parser.add_argument("--torch_compile", action="store_true",
+                        help="Wrap model.net with torch.compile for ~10-30%% extra speed.")
 
     # Camera trajectory for zoom
     parser.add_argument("--zoom_in_trajectory", type=str, default="horizontal_zoom",
@@ -222,6 +225,15 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--use_dmd", action="store_true",
                         help="Enable DMD fast inference: loads DMD distillation LoRA, "
                              "activates DMD scheduler, and reduces sampling steps.")
+
+    # WorldCache (training-free feature caching for block speedup)
+    parser.add_argument("--worldcache", action="store_true",
+                        help="Enable WorldCache: caches transformer block features across timesteps "
+                             "to skip redundant computation (~2-3x block speedup).")
+    parser.add_argument("--worldcache_probe_depth", type=int, default=4,
+                        help="Number of leading blocks always executed per step (default: 4).")
+    parser.add_argument("--worldcache_drift_threshold", type=float, default=0.10,
+                        help="L2 drift threshold below which remaining blocks are skipped (default: 0.10).")
 
     # Misc flags needed by run_lyra2_sample internals
     parser.add_argument("--ablate_same_t5", action="store_true")
@@ -542,6 +554,27 @@ if __name__ == "__main__":
     assert not getattr(model.config, "use_hd_map_cond", False)
 
     model.eval()
+
+    if getattr(args, "worldcache", False):
+        from lyra_2._src.modules.worldcache import WorldCacheState
+        model.net._worldcache = WorldCacheState()
+        model.net._worldcache_probe_depth = args.worldcache_probe_depth
+        model.net._worldcache_drift_threshold = args.worldcache_drift_threshold
+        log.info(
+            f"WorldCache enabled (probe_depth={args.worldcache_probe_depth}, "
+            f"drift_threshold={args.worldcache_drift_threshold})",
+            rank0_only=True,
+        )
+
+    if getattr(args, "torch_compile", False):
+        if platform.system() == "Windows":
+            log.info("torch.compile skipped — not supported on Windows (no Triton)", rank0_only=True)
+        else:
+            try:
+                model.net = torch.compile(model.net, mode="reduce-overhead", dynamic=True)
+                log.info("torch.compile applied to model.net", rank0_only=True)
+            except Exception as e:
+                log.info(f"torch.compile skipped: {e}", rank0_only=True)
     if args.context_parallel_size > 1:
         model.net.enable_context_parallel(process_group)
 
@@ -737,6 +770,11 @@ if __name__ == "__main__":
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        _wc = getattr(model.net, "_worldcache", None)
+        if _wc is not None:
+            _wc.log_stats(log)
+            _wc.reset()
+
         # Step 3b: Generate zoom-out video
         log.info(f"=== Generating ZOOM-OUT video ({args.zoom_out_trajectory} {args.zoom_out_direction} str={args.zoom_out_strength}, N={N_out}) ===", rank0_only=True)
         result_out = _generate_one_direction(
@@ -759,6 +797,10 @@ if __name__ == "__main__":
             ground_normal_cam=ground_normal,
             zoom_out_upward_ratio=args.zoom_out_upward_ratio,
         )
+
+        if _wc is not None:
+            _wc.log_stats(log)
+            _wc.reset()
 
         if result_in is None and result_out is None:
             log.warning(f"Both zoom-in and zoom-out failed for {img_path}", rank0_only=True)
