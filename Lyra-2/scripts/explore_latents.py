@@ -12,13 +12,18 @@ Controls:
   1-9            Jump to 10%-90% of video
   S              Save current frame as PNG
   Mouse drag     Scrub timeline (left-click + drag horizontally)
-  Scroll wheel   Step frames forward/backward
   Q / Esc        Quit
 
+With --depth:
+  A / D          Rotate camera left / right (yaw)
+  W / S          Tilt camera up / down (pitch)
+  C              Reset camera rotation
+
 Usage:
-  python scripts/explore_latents.py --latent results_skyfall_336/videos/00/latents/zoom_in.pt
-  python scripts/explore_latents.py --latent results_skyfall_336/videos/00/latents/zoom_in.pt --also results_skyfall_336/videos/00/latents/zoom_out.pt
-  python scripts/explore_latents.py --latent results_skyfall_336/videos/00/latents/zoom_in.pt --no-cache  # force re-decode, skip cache
+  python scripts/explore_latents.py --latent results_skyfall_004/videos/00/latents/zoom_in.pt
+  python scripts/explore_latents.py --latent results_skyfall_004/videos/00/latents/zoom_in.pt --also results_skyfall_004/videos/00/latents/zoom_out.pt
+  python scripts/explore_latents.py --latent results_skyfall_004/videos/00/latents/zoom_in.pt --depth assets/skyfall_input_004/00_depth.npz
+  python scripts/explore_latents.py --latent results_skyfall_004/videos/00/latents/zoom_in.pt --no-cache
 """
 import argparse
 import os
@@ -58,12 +63,12 @@ def load_cached(latent_path):
 def save_cached(latent_path, video_np):
     p = _cache_path(latent_path)
     np.save(p, video_np)
-    print(f"Cached decoded frames → {p}")
+    print(f"Cached decoded frames -> {p}")
 
 
 @torch.no_grad()
 def decode_to_numpy(latent_path, vae_core, device, dtype, vae_stats_override=None):
-    """Decode latent .pt → numpy uint8 (T, H, W, 3) array in memory."""
+    """Decode latent .pt -> numpy uint8 (T, H, W, 3) array in memory."""
     data = torch.load(latent_path, map_location="cpu", weights_only=False)
     latents = data["history_latents"]
     start_index = int(data["start_index"])
@@ -107,36 +112,79 @@ def decode_to_numpy(latent_path, vae_core, device, dtype, vae_stats_override=Non
     video = torch.cat(frames, dim=1)[:, start_index:]  # (C, T, H, W)
     video_np = ((video.clamp(-1, 1) * 0.5 + 0.5) * 255).to(torch.uint8)
     video_np = video_np.permute(1, 2, 3, 0).numpy()    # (T, H, W, C) RGB
-    print(f"  → {video_np.shape[0]} frames, {video_np.shape[2]}×{video_np.shape[1]}")
+    print(f"  -> {video_np.shape[0]} frames, {video_np.shape[2]}x{video_np.shape[1]}")
     return video_np
+
+
+# ── Depth warp ─────────────────────────────────────────────────────────────────
+
+def load_depth(depth_npz, vid_H, vid_W):
+    """Load depth npz and scale intrinsics to match video resolution."""
+    d = np.load(depth_npz)
+    depth = d["depth_hw"].astype(np.float32)
+    K = d["K_33"].astype(np.float64)
+    H_d, W_d = depth.shape
+    depth_resized = cv2.resize(depth, (vid_W, vid_H), interpolation=cv2.INTER_LINEAR)
+    K_vid = K.copy()
+    K_vid[0, 0] *= vid_W / W_d   # fx
+    K_vid[0, 2] *= vid_W / W_d   # cx
+    K_vid[1, 1] *= vid_H / H_d   # fy
+    K_vid[1, 2] *= vid_H / H_d   # cy
+    print(f"Depth loaded: {W_d}x{H_d} -> {vid_W}x{vid_H}, depth range [{depth.min():.1f}, {depth.max():.1f}]")
+    return depth_resized, K_vid
+
+
+def make_warp_maps(depth, K, yaw, pitch):
+    """Compute backward-warp source maps for cv2.remap given yaw/pitch rotation (radians)."""
+    H, W = depth.shape
+    cy_r, sy_r = np.cos(yaw), np.sin(yaw)
+    cp_r, sp_r = np.cos(pitch), np.sin(pitch)
+    Ry = np.array([[cy_r, 0, sy_r], [0, 1, 0], [-sy_r, 0, cy_r]], dtype=np.float64)
+    Rx = np.array([[1, 0, 0], [0, cp_r, -sp_r], [0, sp_r, cp_r]], dtype=np.float64)
+    R = Rx @ Ry
+    Kinv = np.linalg.inv(K)
+    ys, xs = np.mgrid[0:H, 0:W]
+    pts = np.stack([xs.ravel().astype(np.float64),
+                    ys.ravel().astype(np.float64),
+                    np.ones(H * W, dtype=np.float64)], axis=0)  # (3, N)
+    # Unproject output pixels to 3D using source depth as proxy
+    rays = Kinv @ pts                             # (3, N)
+    pts3d = rays * depth.ravel().astype(np.float64)  # (3, N)
+    # Backward: rotate source to find where output pixel came from
+    pts3d_src = R.T @ pts3d                       # (3, N)
+    proj = K @ pts3d_src                          # (3, N)
+    u_src = (proj[0] / proj[2]).reshape(H, W).astype(np.float32)
+    v_src = (proj[1] / proj[2]).reshape(H, W).astype(np.float32)
+    return u_src, v_src
 
 
 # ── HUD ────────────────────────────────────────────────────────────────────────
 
-def draw_hud(frame, idx, total, playing, speed, reverse, loop, label=""):
+def draw_hud(frame, idx, total, playing, speed, reverse, loop, label="", last_key=255):
     h, w = frame.shape[:2]
     out = frame.copy()
 
-    # Timeline bar
     bar_y, bar_h = h - 18, 6
     cv2.rectangle(out, (0, bar_y), (w, bar_y + bar_h), (40, 40, 40), -1)
     fill = int(w * idx / max(total - 1, 1))
     cv2.rectangle(out, (0, bar_y), (fill, bar_y + bar_h), (0, 200, 100), -1)
 
-    # Status text
     icon  = ">" if playing else "||"
     flags = ("R" if reverse else "") + ("L" if loop else "")
     text  = f"{icon} {idx+1}/{total}  {speed:.2f}x  {flags}  {label}"
     cv2.putText(out, text, (8, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
     cv2.putText(out, text, (8, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
+
+    key_char = chr(last_key) if 32 <= last_key < 127 else f"#{last_key}"
+    key_text = f"key:{key_char}"
+    cv2.putText(out, key_text, (w - 80, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
+    cv2.putText(out, key_text, (w - 80, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1, cv2.LINE_AA)
     return out
 
 
 # ── Mouse scrub ────────────────────────────────────────────────────────────────
 
-_mouse_state = {"dragging": False, "x": 0}
-
-def make_mouse_cb(state, frames_ref):
+def make_mouse_cb(state):
     def cb(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             state["dragging"] = True
@@ -150,59 +198,85 @@ def make_mouse_cb(state, frames_ref):
 
 # ── Main explorer ──────────────────────────────────────────────────────────────
 
-def run_explorer(all_videos, labels, fps=16, save_dir="."):
+def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
     """all_videos: list of (T, H, W, 3) uint8 numpy arrays."""
-    # Concatenate multiple videos side by side if needed
-    if len(all_videos) > 1:
-        max_t = max(v.shape[0] for v in all_videos)
-        padded = []
-        for v in all_videos:
-            if v.shape[0] < max_t:
-                pad = np.zeros((max_t - v.shape[0], *v.shape[1:]), dtype=np.uint8)
-                v = np.concatenate([v, pad], axis=0)
-            padded.append(v)
-        frames = np.concatenate(padded, axis=2)  # side by side
-        label = " | ".join(labels)
-    else:
-        frames = all_videos[0]
-        label = labels[0]
+    T = max(v.shape[0] for v in all_videos)
+    vid_H, vid_W = all_videos[0].shape[1:3]
 
-    T, H, W, _ = frames.shape
+    # Pad shorter videos to same length
+    padded = []
+    for v in all_videos:
+        if v.shape[0] < T:
+            pad = np.zeros((T - v.shape[0], *v.shape[1:]), dtype=np.uint8)
+            v = np.concatenate([v, pad], axis=0)
+        padded.append(v)
+
+    label = " | ".join(labels)
+    W_disp = vid_W * len(padded)
+    H_disp = vid_H
+
     win = "Lyra-2 Latent Explorer"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    scale = min(1440 / W, 900 / H, 2.0)
-    cv2.resizeWindow(win, int(W * scale), int(H * scale))
+    scale = min(1440 / W_disp, 900 / H_disp, 2.0)
+    cv2.resizeWindow(win, int(W_disp * scale), int(H_disp * scale))
 
     mouse_state = {"dragging": False, "x": 0}
-    cv2.setMouseCallback(win, make_mouse_cb(mouse_state, frames))
+    cv2.setMouseCallback(win, make_mouse_cb(mouse_state))
 
+    has_depth = depth is not None and K is not None
     idx = 0
     playing = True
     speed = 1.0
     reverse = False
     loop = False
+    yaw = 0.0
+    pitch = 0.0
+    last_key = 255
+    step_rad = np.radians(3.0)
+    warp_cache = {"yaw": None, "pitch": None, "map_x": None, "map_y": None}
     frame_delay = 1.0 / fps
     last_time = time.time()
 
-    print(f"\nExplorer ready — {T} frames  ({W}×{H})")
-    print("Space=play/pause  ←/→=step  ↑/↓=speed  R=reverse  L=loop  1-9=jump  S=save  Q=quit")
+    print(f"\nExplorer ready -- {T} frames  ({W_disp}x{H_disp})")
+    if has_depth:
+        print("Space=play/pause  </>=step  ^/v=speed  A/D=yaw  Z/X=pitch  C=reset view  R=reverse  L=loop  S=save  Q=quit")
+    else:
+        print("Space=play/pause  </>=step  ^/v=speed  R=reverse  L=loop  1-9=jump  S=save  Q=quit")
+        print("Tip: pass --depth assets/skyfall_input_004/00_depth.npz to enable camera rotation")
 
     while True:
         # Mouse scrub
         if mouse_state["dragging"]:
-            idx = int(mouse_state["x"] / max(W - 1, 1) * (T - 1))
+            idx = int(mouse_state["x"] / max(W_disp - 1, 1) * (T - 1))
             idx = max(0, min(T - 1, idx))
 
-        # Draw
-        frame_rgb = frames[idx]
+        # Recompute warp maps only when angle changes
+        if has_depth and (yaw != warp_cache["yaw"] or pitch != warp_cache["pitch"]):
+            warp_cache["map_x"], warp_cache["map_y"] = make_warp_maps(depth, K, yaw, pitch)
+            warp_cache["yaw"] = yaw
+            warp_cache["pitch"] = pitch
+
+        # Warp each panel independently, then concatenate
+        panels = []
+        for v in padded:
+            frame_rgb = v[idx]
+            if has_depth and (yaw != 0.0 or pitch != 0.0):
+                frame_rgb = cv2.remap(frame_rgb, warp_cache["map_x"], warp_cache["map_y"],
+                                      cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+            panels.append(frame_rgb)
+        frame_rgb = np.concatenate(panels, axis=1) if len(panels) > 1 else panels[0]
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        frame_bgr = draw_hud(frame_bgr, idx, T, playing, speed, reverse, loop, label)
+
+        angle_str = f"  yaw={np.degrees(yaw):.0f} pit={np.degrees(pitch):.0f}" if has_depth else ""
+        frame_bgr = draw_hud(frame_bgr, idx, T, playing, speed, reverse, loop, label + angle_str, last_key)
         cv2.imshow(win, frame_bgr)
 
-        # Keyboard (1ms poll)
-        key = cv2.waitKey(1) & 0xFF
+        raw = cv2.waitKey(1)
+        key = raw & 0xFF
+        if raw != -1:
+            last_key = key
 
-        if key in (ord('q'), 27):  # Q or Esc
+        if key in (ord('q'), 27):
             break
         elif key == ord(' '):
             playing = not playing
@@ -226,12 +300,22 @@ def run_explorer(all_videos, labels, fps=16, save_dir="."):
             print(f"Saved {out_path}")
         elif ord('1') <= key <= ord('9'):
             idx = int((key - ord('1')) / 8 * (T - 1))
-        elif key == 0:  # Home (some terminals)
+        elif key == 0:
             idx = 0
-        elif key == 255:  # End
+        elif key == 255:
             idx = T - 1
-
-        # Scroll wheel (OpenCV encodes as flags in some builds)
+        elif has_depth:
+            if key == ord('a'):
+                yaw -= step_rad
+            elif key == ord('d'):
+                yaw += step_rad
+            elif key == ord('z'):
+                pitch -= step_rad
+            elif key == ord('x'):
+                pitch += step_rad
+            elif key == ord('c'):
+                yaw = 0.0
+                pitch = 0.0
 
         # Auto-advance when playing
         if playing and not mouse_state["dragging"]:
@@ -258,6 +342,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--latent", required=True, help="Primary latent .pt file")
     parser.add_argument("--also", nargs="*", default=[], help="Additional latent .pt files (shown side-by-side)")
+    parser.add_argument("--depth", default=None, help="Path to _depth.npz for camera rotation (e.g. assets/skyfall_input_004/00_depth.npz)")
     parser.add_argument("--vae_pth", default="checkpoints/vae/vae.pth")
     parser.add_argument("--fps", type=int, default=16)
     parser.add_argument("--save_dir", default=".", help="Directory for saved frames (S key)")
@@ -269,7 +354,6 @@ def main():
     dtype = torch.bfloat16
     all_paths = [args.latent] + (args.also or [])
 
-    # Check which paths still need decoding
     need_decode = [p for p in all_paths if not (args.cache and load_cached(p) is not None)]
     vae_core = None
     if need_decode:
@@ -290,7 +374,12 @@ def main():
         all_videos.append(arr)
         labels.append(os.path.basename(path).replace(".pt", ""))
 
-    run_explorer(all_videos, labels, fps=args.fps, save_dir=args.save_dir)
+    depth, K = None, None
+    if args.depth:
+        vid_H, vid_W = all_videos[0].shape[1:3]
+        depth, K = load_depth(args.depth, vid_H, vid_W)
+
+    run_explorer(all_videos, labels, fps=args.fps, save_dir=args.save_dir, depth=depth, K=K)
 
 
 if __name__ == "__main__":
