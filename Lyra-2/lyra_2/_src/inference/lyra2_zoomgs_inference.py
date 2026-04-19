@@ -167,8 +167,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--experiment", type=str, default="lyra_framepack_spatial")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/model")
     parser.add_argument("--output_path", type=str, default="inference/lyra2_zoomgs")
-    parser.add_argument("--save_latents_dir", type=str, default=None,
-                        help="If set, save raw denoised latents to this dir for later re-decode.")
+    parser.add_argument("--save_latents", action="store_true",
+                        help="Save raw denoised latents to {output_path}/{image}/latents/ for later re-decode.")
     parser.add_argument("--guidance", type=float, default=5.0)
     parser.add_argument("--shift", type=float, default=5.0)
     parser.add_argument("--num_sampling_step", type=int, default=50)
@@ -427,6 +427,7 @@ def _generate_one_direction(
     zoom_out_upward_ratio: float = 0.0,
     multiview_data: dict | None = None,
     multiview_ids: list[int] | None = None,
+    latent_save_path: str | None = None,
 ) -> dict | None:
     """Run AR spatial inference for a single camera trajectory direction."""
     device = model.tensor_kwargs.get("device", None)
@@ -503,10 +504,6 @@ def _generate_one_direction(
     if multiview_ids is not None:
         args.multiview_ids = multiview_ids
     try:
-        latent_save_path = None
-        if getattr(args, "save_latents_dir", None):
-            os.makedirs(args.save_latents_dir, exist_ok=True)
-            latent_save_path = os.path.join(args.save_latents_dir, f"{log_prefix}.pt")
         result = run_lyra2_sample(
             model,
             data_batch,
@@ -869,6 +866,7 @@ if __name__ == "__main__":
 
         # Step 3: Generate zoom-in video
         log.info(f"=== Generating ZOOM-IN video ({args.zoom_in_trajectory} {args.zoom_in_direction} str={args.zoom_in_strength}, N={N_in}) ===", rank0_only=True)
+        _latents_dir = os.path.join(per_image_dir, "latents") if getattr(args, "save_latents", False) else None
         result_in = _generate_one_direction(
             model=model,
             args=args,
@@ -888,6 +886,7 @@ if __name__ == "__main__":
             ground_normal_cam=ground_normal,
             multiview_data=mv_data,
             multiview_ids=mv_ids,
+            latent_save_path=os.path.join(_latents_dir, "zoom_in.pt") if _latents_dir else None,
         )
 
         gc.collect()
@@ -925,6 +924,7 @@ if __name__ == "__main__":
                 zoom_out_upward_ratio=args.zoom_out_upward_ratio,
                 multiview_data=mv_data,
                 multiview_ids=mv_ids,
+                latent_save_path=os.path.join(_latents_dir, "zoom_out.pt") if _latents_dir else None,
             )
 
         if _wc is not None:

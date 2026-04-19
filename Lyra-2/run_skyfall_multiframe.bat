@@ -39,11 +39,11 @@ if errorlevel 1 goto :error
 :: if errorlevel 1 goto :error
 
 :: Viewer — pop up scene visualizer (non-blocking)
-start "Scene Viewer" python scripts/visualize_scene.py --scene assets/skyfall/datasets_NYC/NYC_336 --zoom_strength 0.15
+start "Scene Viewer" python scripts/visualize_scene.py --scene assets/skyfall/datasets_NYC/NYC_336 --zoom_strength 0.08
 
 :: Step 4 — run Lyra-2 inference (NYC_336 = 00.png)
 :: Add --multiframe_cache_dir assets/skyfall_input_336 to enable multiframe spatial cache
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input_336/00.png --prompt_dir assets/skyfall_input_336 --depth_dir assets/skyfall_input_336 --num_samples 1 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall_336/videos --num_frames_zoom_in !ZOOM_FRAMES! --num_frames_zoom_out !ZOOM_FRAMES! --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --zoom_in_strength 0.15 --zoom_out_strength 0.5 --save_latents_dir results_skyfall_336/videos/latents --log_file results_skyfall_336\run.log
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input_336/00.png --prompt_dir assets/skyfall_input_336 --depth_dir assets/skyfall_input_336 --num_samples 1 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall_336/videos --num_frames_zoom_in !ZOOM_FRAMES! --num_frames_zoom_out !ZOOM_FRAMES! --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --zoom_in_strength 0.08 --zoom_out_strength 0.25 --save_latents --log_file results_skyfall_336\run.log
 if errorlevel 1 goto :error
 
 :: Step 5 — frame interpolation (only when USE_RIFE=1)
