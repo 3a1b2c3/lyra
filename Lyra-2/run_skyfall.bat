@@ -20,8 +20,12 @@ if errorlevel 1 goto :error
 python scripts/prepare_skyfall.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0
 if errorlevel 1 goto :error
 
-:: Step 2 — run Lyra-2 inference
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input --prompt_dir assets/skyfall_input --num_samples 4 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --log_file results_skyfall\run.log
+:: Step 2 — project PLY point clouds into reference cameras
+python scripts/prepare_skyfall_depth.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0
+if errorlevel 1 goto :error
+
+:: Step 3 — run Lyra-2 inference
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input --prompt_dir assets/skyfall_input --depth_dir assets/skyfall_input --num_samples 4 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --zoom_in_strength 0.08 --zoom_out_strength 0.25 --save_latents --log_file results_skyfall\run.log
 if errorlevel 1 goto :error
 
 echo.

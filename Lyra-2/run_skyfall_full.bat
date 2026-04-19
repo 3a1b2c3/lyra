@@ -26,13 +26,18 @@ if exist "assets\skyfall\datasets_NYC" (
 )
 
 :: ── Step 2: Prepare inputs ──────────────────────────────────────────────────
-echo [2/3] Preparing inputs from Skyfall scenes...
+echo [2/4] Preparing inputs from Skyfall scenes...
 python scripts\prepare_skyfall.py --skyfall_dir assets\skyfall\datasets_NYC --out_dir assets\skyfall_input --frame_idx 0
 if errorlevel 1 ( echo ERROR: prepare failed & pause & exit /b 1 )
 
-:: ── Step 3: Run Lyra-2 inference ────────────────────────────────────────────
-echo [3/3] Running Lyra-2 inference...
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets\skyfall_input --prompt_dir assets\skyfall_input --num_samples 4 --experiment lyra2 --checkpoint_dir checkpoints\model --output_path results_skyfall\videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --log_file results_skyfall\run.log
+:: ── Step 3: Project PLY depth ────────────────────────────────────────────────
+echo [3/4] Projecting point clouds...
+python scripts\prepare_skyfall_depth.py --skyfall_dir assets\skyfall\datasets_NYC --out_dir assets\skyfall_input --frame_idx 0
+if errorlevel 1 ( echo ERROR: depth failed & pause & exit /b 1 )
+
+:: ── Step 4: Run Lyra-2 inference ────────────────────────────────────────────
+echo [4/4] Running Lyra-2 inference...
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets\skyfall_input --prompt_dir assets\skyfall_input --depth_dir assets\skyfall_input --num_samples 4 --experiment lyra2 --checkpoint_dir checkpoints\model --output_path results_skyfall\videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --zoom_in_strength 0.08 --zoom_out_strength 0.25 --save_latents --log_file results_skyfall\run.log
 if errorlevel 1 ( echo ERROR: inference failed & pause & exit /b 1 )
 
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "Get-Date -Format HH:mm:ss"') do set END_TIME=%%t

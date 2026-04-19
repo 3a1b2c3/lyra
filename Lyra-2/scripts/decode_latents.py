@@ -45,6 +45,7 @@ def decode_latents(latents, start_index, vae_stats, vae_core, device, dtype):
     z_dim = int(vae_stats["z_dim"])
 
     ctx = torch.amp.autocast("cuda", dtype=dtype) if torch.cuda.is_available() else nullcontext()
+    vae_core.clear_cache()
     dec_feat_cache = [None] * vae_core._conv_num
     frames_out = []
 

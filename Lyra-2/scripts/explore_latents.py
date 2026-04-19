@@ -82,6 +82,7 @@ def decode_to_numpy(latent_path, vae_core, device, dtype, vae_stats_override=Non
     z_dim = int(vae_stats["z_dim"])
 
     ctx = torch.amp.autocast("cuda", dtype=dtype) if torch.cuda.is_available() else nullcontext()
+    vae_core.clear_cache()
     dec_feat_cache = [None] * vae_core._conv_num
     frames = []
     T_lat = latents.shape[2]
