@@ -13,11 +13,7 @@ set PYTHONUNBUFFERED=1
 set USE_RIFE=0
 set RIFE_FACTOR=4
 
-if "%USE_RIFE%"=="1" (
-    set /a ZOOM_FRAMES=(81-1)/RIFE_FACTOR+1
-) else (
-    set ZOOM_FRAMES=81
-)
+set ZOOM_FRAMES=81
 :: ────────────────────────────────────────────────────────────────────────────
 
 if not exist ".ffmpeg_path_cache.bat" (
@@ -41,6 +37,9 @@ if errorlevel 1 goto :error
 :: Step 3 — build multi-frame spatial cache (optional; uncomment to enable)
 :: python scripts/prepare_skyfall_multiframe.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input_336 --frame_idx 0 --target_hw 320 576 --scenes NYC_336
 :: if errorlevel 1 goto :error
+
+:: Viewer — pop up scene visualizer (non-blocking)
+start "Scene Viewer" python scripts/visualize_scene.py --scene assets/skyfall/datasets_NYC/NYC_336 --zoom_strength 0.15
 
 :: Step 4 — run Lyra-2 inference (NYC_336 = 00.png)
 :: Add --multiframe_cache_dir assets/skyfall_input_336 to enable multiframe spatial cache

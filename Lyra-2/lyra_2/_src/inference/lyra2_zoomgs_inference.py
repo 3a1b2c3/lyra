@@ -167,6 +167,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--experiment", type=str, default="lyra_framepack_spatial")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/model")
     parser.add_argument("--output_path", type=str, default="inference/lyra2_zoomgs")
+    parser.add_argument("--save_latents_dir", type=str, default=None,
+                        help="If set, save raw denoised latents to this dir for later re-decode.")
     parser.add_argument("--guidance", type=float, default=5.0)
     parser.add_argument("--shift", type=float, default=5.0)
     parser.add_argument("--num_sampling_step", type=int, default=50)
@@ -501,6 +503,10 @@ def _generate_one_direction(
     if multiview_ids is not None:
         args.multiview_ids = multiview_ids
     try:
+        latent_save_path = None
+        if getattr(args, "save_latents_dir", None):
+            os.makedirs(args.save_latents_dir, exist_ok=True)
+            latent_save_path = os.path.join(args.save_latents_dir, f"{log_prefix}.pt")
         result = run_lyra2_sample(
             model,
             data_batch,
@@ -510,6 +516,7 @@ def _generate_one_direction(
             show_progress=True,
             log_prefix=log_prefix,
             multiview_data=multiview_data,
+            latent_save_path=latent_save_path,
         )
     finally:
         args.num_frames = saved_num_frames

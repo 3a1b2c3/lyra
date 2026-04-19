@@ -1192,7 +1192,7 @@ class Lyra2InferencePipeline:
 
         raise ValueError(f"Only depth_backend='da3' is supported in this script (VIPE backend removed).")
 
-    def build_outputs(self, da3_gs_export_stem, log_prefix):
+    def build_outputs(self, da3_gs_export_stem, log_prefix, latent_save_path=None):
         video = self.history_frames[:, :, self.start_index:]
         warp_video = None
         if self.use_pose and len(self.warp_video_collect) > 0:
@@ -1203,6 +1203,28 @@ class Lyra2InferencePipeline:
         video_out = video.float().cpu()
         warp_out = warp_video.float().cpu() if warp_video is not None else None
         warp_out_merged = None
+
+        if latent_save_path is not None:
+            os.makedirs(os.path.dirname(os.path.abspath(latent_save_path)), exist_ok=True)
+            scale_mean = self.vae_wrap.scale[0]
+            scale_inv_std = self.vae_wrap.scale[1]
+            torch.save({
+                "history_latents": self.history_latents.cpu(),
+                "start_index": self.start_index,
+                "frames_per_latent": int(self.frames_per_latent),
+                "vae_stats": {
+                    "img_mean": self.vae_wrap.img_mean.cpu(),
+                    "img_std": self.vae_wrap.img_std.cpu(),
+                    "video_mean": self.vae_wrap.video_mean.cpu(),
+                    "video_std": self.vae_wrap.video_std.cpu(),
+                    "scale_mean": scale_mean.cpu() if torch.is_tensor(scale_mean) else scale_mean,
+                    "scale_inv_std": scale_inv_std.cpu() if torch.is_tensor(scale_inv_std) else scale_inv_std,
+                    "is_amp": self.vae_wrap.is_amp,
+                    "z_dim": self.vae_core.z_dim,
+                },
+            }, latent_save_path)
+            log.info(f"Saved latents to {latent_save_path} "
+                     f"(shape={list(self.history_latents.shape)}, start={self.start_index})", rank0_only=True)
 
         del self.history_frames, self.history_latents, self.enc_feat_cache, self.dec_feat_cache
         del self.warp_video_collect
@@ -1229,6 +1251,7 @@ def run_lyra2_sample(
     da3_gs_export_stem=None,
     vipe_input_dump_dir=None,
     multiview_data=None,
+    latent_save_path=None,
 ):
     """Shared Lyra2 autoregressive generation logic for a single prepared sample."""
     model._normalize_video_databatch_inplace(data_batch)
@@ -1333,4 +1356,4 @@ def run_lyra2_sample(
             if step_out["abort"]:
                 break
 
-    return pipeline.build_outputs(da3_gs_export_stem, log_prefix)
+    return pipeline.build_outputs(da3_gs_export_stem, log_prefix, latent_save_path=latent_save_path)
