@@ -167,8 +167,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--experiment", type=str, default="lyra_framepack_spatial")
     parser.add_argument("--checkpoint_dir", type=str, default="checkpoints/model")
     parser.add_argument("--output_path", type=str, default="inference/lyra2_zoomgs")
-    parser.add_argument("--save_latents", action="store_true",
-                        help="Save raw denoised latents to {output_path}/{image}/latents/ for later re-decode.")
+    parser.add_argument("--save_latents", action=argparse.BooleanOptionalAction, default=True,
+                        help="Save raw denoised latents + depth to {output_path}/{image}/latents/ (default: on, use --no-save-latents to disable).")
     parser.add_argument("--guidance", type=float, default=5.0)
     parser.add_argument("--shift", type=float, default=5.0)
     parser.add_argument("--num_sampling_step", type=int, default=50)
@@ -866,7 +866,16 @@ if __name__ == "__main__":
 
         # Step 3: Generate zoom-in video
         log.info(f"=== Generating ZOOM-IN video ({args.zoom_in_trajectory} {args.zoom_in_direction} str={args.zoom_in_strength}, N={N_in}) ===", rank0_only=True)
-        _latents_dir = os.path.join(per_image_dir, "latents") if getattr(args, "save_latents", False) else None
+        _latents_dir = os.path.join(per_image_dir, "latents") if getattr(args, "save_latents", True) else None
+        if _latents_dir is not None:
+            os.makedirs(_latents_dir, exist_ok=True)
+            np.savez(
+                os.path.join(_latents_dir, "depth.npz"),
+                depth_hw=depth_hw.cpu().numpy().astype(np.float32),
+                K_33=K_33.cpu().numpy().astype(np.float32) if torch.is_tensor(K_33) else K_33.astype(np.float32),
+                mask_hw=mask_hw.cpu().numpy().astype(np.float32),
+            )
+            log.info(f"Saved depth.npz to {_latents_dir}", rank0_only=True)
         result_in = _generate_one_direction(
             model=model,
             args=args,

@@ -420,9 +420,16 @@ def main():
         labels.append(os.path.basename(path).replace(".pt", ""))
 
     depth, K = None, None
-    if args.depth:
+    depth_path = args.depth
+    if depth_path is None:
+        # Auto-discover depth.npz saved alongside latents by inference
+        auto = os.path.join(os.path.dirname(args.latent), "depth.npz")
+        if os.path.exists(auto):
+            depth_path = auto
+            print(f"Auto-discovered depth: {auto}")
+    if depth_path:
         vid_H, vid_W = all_videos[0].shape[1:3]
-        depth, K = load_depth(args.depth, vid_H, vid_W)
+        depth, K = load_depth(depth_path, vid_H, vid_W)
 
     run_explorer(all_videos, labels, fps=args.fps, save_dir=args.save_dir, depth=depth, K=K)
 
