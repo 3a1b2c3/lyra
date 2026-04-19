@@ -255,7 +255,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--ablate_same_t5", action="store_true")
     parser.add_argument("--use_dmd_scheduler", action="store_true")
     parser.add_argument("--warp_chunk_size", type=int, default=None)
-    parser.add_argument("--num_retrieval_views", type=int, default=1)
+    parser.add_argument("--num_retrieval_views", type=int, default=5)
     parser.add_argument("--disable_cache_update", action="store_true")
     parser.add_argument("--multiview_ids", type=int, nargs="+", default=None)
     parser.add_argument("--offload_da3_diffusion", action="store_true")
@@ -749,6 +749,7 @@ if __name__ == "__main__":
             )
         H, W = image_chw01.shape[-2:]
 
+        depth_scale = None
         # Step 1b: Optionally align DA3 depth to MoGe scale
         if args.use_moge_scale and moge_model is not None:
             log.info("Aligning DA3 depth to MoGe scale...", rank0_only=True)
@@ -784,6 +785,7 @@ if __name__ == "__main__":
                     log.info(f"Global inverse-depth scale factor: {scale.item()}", rank0_only=True)
                     if scale > 1e-6:
                         depth_hw = depth_hw / scale.to(depth_hw.device)
+                        depth_scale = scale.item()
                     else:
                         log.warning(f"Scale too small ({scale.item()}), skipping alignment.", rank0_only=True)
                 else:
@@ -842,6 +844,13 @@ if __name__ == "__main__":
             mv_data, mv_ids = _load_multiframe_cache(
                 args.multiframe_cache_dir, base_name, desired_device
             )
+            if mv_data is not None and depth_scale is not None and depth_scale > 1e-6:
+                mv_data = dict(mv_data)
+                mv_data["depth"] = mv_data["depth"] / depth_scale
+                w2c = mv_data["camera_w2c"].clone()
+                w2c[..., :3, 3] = w2c[..., :3, 3] / depth_scale
+                mv_data["camera_w2c"] = w2c
+                log.info(f"Multiframe cache depth+translation scaled by 1/{depth_scale:.2f}", rank0_only=True)
 
         # Step 2d: Optionally fit ground plane for trajectory alignment
         ground_normal = None

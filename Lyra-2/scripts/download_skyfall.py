@@ -61,6 +61,14 @@ if __name__ == "__main__":
 
     prefix = None if args.city == "all" else f"datasets_{args.city}/"
 
+    # Fast-path: if the city directory already exists and contains scene folders, skip listing.
+    if args.city != "all":
+        city_dir = os.path.join(args.out, f"datasets_{args.city}")
+        if os.path.isdir(city_dir) and any(os.scandir(city_dir)):
+            print(f"datasets_{args.city}/ already present at {city_dir} — skipping download.")
+            print(f"Done: {args.out}")
+            exit(0)
+
     print(f"Listing files in {REPO_ID} (city={args.city})...")
     files = list_repo_files(REPO_ID, prefix=prefix, max_retries=args.retries)
     print(f"Found {len(files)} files. Downloading to {args.out}")

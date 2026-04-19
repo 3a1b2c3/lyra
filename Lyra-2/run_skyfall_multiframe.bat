@@ -16,20 +16,20 @@ set PATH=%FFMPEG_DIR%;%PATH%
 python scripts/download_skyfall.py --city NYC
 if errorlevel 1 goto :error
 
-:: Step 1 — extract reference frames (1 per scene)
-python scripts/prepare_skyfall.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0
+:: Step 1 — extract reference frames (NYC_004 only)
+python scripts/prepare_skyfall.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0 --scenes NYC_004
 if errorlevel 1 goto :error
 
-:: Step 2 — project PLY point clouds into reference cameras (replaces DA3 depth)
-python scripts/prepare_skyfall_depth.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0
+:: Step 2 — project PLY point clouds into reference cameras (NYC_004 only)
+python scripts/prepare_skyfall_depth.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0 --scenes NYC_004
 if errorlevel 1 goto :error
 
-:: Step 3 — build multi-frame spatial cache (4 frames adjacent to reference frame)
-python scripts/prepare_skyfall_multiframe.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --num_frames 4 --frame_idx 0 --target_hw 320 576
+:: Step 3 — build multi-frame spatial cache (NYC_004 only)
+python scripts/prepare_skyfall_multiframe.py --skyfall_dir assets/skyfall/datasets_NYC --out_dir assets/skyfall_input --frame_idx 0 --target_hw 320 576 --scenes NYC_004
 if errorlevel 1 goto :error
 
-:: Step 4 — run Lyra-2 inference with PLY depth + multiframe spatial cache
-python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input --prompt_dir assets/skyfall_input --depth_dir assets/skyfall_input --multiframe_cache_dir assets/skyfall_input --num_retrieval_views 3 --num_samples 4 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall_multiframe/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --log_file results_skyfall_multiframe\run.log
+:: Step 4 — run Lyra-2 inference (NYC_004 = 00.png)
+python -m lyra_2._src.inference.lyra2_zoomgs_inference --input_image_path assets/skyfall_input/00.png --prompt_dir assets/skyfall_input --depth_dir assets/skyfall_input --multiframe_cache_dir assets/skyfall_input --num_samples 1 --experiment lyra2 --checkpoint_dir checkpoints/model --output_path results_skyfall_multiframe/videos --num_frames_zoom_in 81 --num_frames_zoom_out 81 --resolution 320,576 --offload_when_prompt --warp_chunk_size 4 --use_dmd --torch_compile --log_file results_skyfall_multiframe\run.log
 if errorlevel 1 goto :error
 
 echo.

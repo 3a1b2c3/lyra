@@ -1,0 +1,24 @@
+# Windows-specific requirements for Lyra
+# Replaces packages in requirements_gen3c.txt and requirements_lyra.txt
+# that need special handling on Windows.
+
+# PyTorch with CUDA 12.8 (replaces torch==2.6.0 from requirements_gen3c.txt)
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0
+torchvision
+
+# Flash Attention - prebuilt Windows wheel (replaces flash_attn==2.7.4.post1)
+# Source: https://huggingface.co/Wildminder/AI-windows-whl
+https://huggingface.co/Wildminder/AI-windows-whl/resolve/main/flash_attn-2.8.3+cu128torch2.8.0cxx11abiTRUE-cp312-cp312-win_amd64.whl
+
+# gsplat - compile from source (run build_gsplat.bat, requires MSVC 2022 + CUDA 12.8)
+# build_gsplat.bat calls vcvars64.bat then: pip install --no-build-isolation git+https://github.com/nerfstudio-project/gsplat.git@73fad53c31ec4d6b088470715a63f432990493de
+
+# Not installable on Windows (Linux-only):
+# megatron-core==0.10.0  -- colon in tarball path, Windows incompatible
+# deepspeed==0.17.5      -- Linux-only in practice
+# causal-conv1d          -- no Windows prebuilt, CUDA compilation required
+# fused-ssim             -- no Windows prebuilt
+# transformer-engine     -- Linux-only
+# apex                   -- Linux-only
+# mamba (state-spaces)   -- Linux-only
