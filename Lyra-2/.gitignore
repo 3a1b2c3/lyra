@@ -99,6 +99,7 @@ imaginaire4/
 
 credentials/*.secret
 results/
+results_*/
 
 # Checkpoint cleanup
 .checkpoint_keep
