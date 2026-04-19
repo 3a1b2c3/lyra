@@ -134,25 +134,29 @@ def load_depth(depth_npz, vid_H, vid_W):
     return depth_resized, K_vid
 
 
-def make_warp_maps(depth, K, yaw, pitch):
-    """Compute backward-warp source maps for cv2.remap given yaw/pitch rotation (radians)."""
+def make_warp_maps(depth, K, yaw, pitch, roll=0.0):
+    """Backward-warp source maps for cv2.remap. Orbits around the center scene point
+    so the image center stays fixed regardless of rotation angle."""
     H, W = depth.shape
     cy_r, sy_r = np.cos(yaw), np.sin(yaw)
     cp_r, sp_r = np.cos(pitch), np.sin(pitch)
+    cr_r, sr_r = np.cos(roll), np.sin(roll)
     Ry = np.array([[cy_r, 0, sy_r], [0, 1, 0], [-sy_r, 0, cy_r]], dtype=np.float64)
     Rx = np.array([[1, 0, 0], [0, cp_r, -sp_r], [0, sp_r, cp_r]], dtype=np.float64)
-    R = Rx @ Ry
+    Rz = np.array([[cr_r, -sr_r, 0], [sr_r, cr_r, 0], [0, 0, 1]], dtype=np.float64)
+    R = Rx @ Ry @ Rz
     Kinv = np.linalg.inv(K)
     ys, xs = np.mgrid[0:H, 0:W]
     pts = np.stack([xs.ravel().astype(np.float64),
                     ys.ravel().astype(np.float64),
                     np.ones(H * W, dtype=np.float64)], axis=0)  # (3, N)
-    # Unproject output pixels to 3D using source depth as proxy
-    rays = Kinv @ pts                             # (3, N)
-    pts3d = rays * depth.ravel().astype(np.float64)  # (3, N)
-    # Backward: rotate source to find where output pixel came from
-    pts3d_src = R.T @ pts3d                       # (3, N)
-    proj = K @ pts3d_src                          # (3, N)
+    rays = Kinv @ pts                                    # (3, N)
+    pts3d = rays * depth.ravel().astype(np.float64)     # (3, N)
+    # Orbit around center scene point so image center stays stationary
+    center_depth = float(depth[H // 2, W // 2])
+    pivot = np.array([0.0, 0.0, center_depth])          # 3D point at image center
+    pts3d_src = R.T @ (pts3d - pivot[:, None]) + pivot[:, None]
+    proj = K @ pts3d_src                                 # (3, N)
     u_src = (proj[0] / proj[2]).reshape(H, W).astype(np.float32)
     v_src = (proj[1] / proj[2]).reshape(H, W).astype(np.float32)
     return u_src, v_src
@@ -160,7 +164,25 @@ def make_warp_maps(depth, K, yaw, pitch):
 
 # ── HUD ────────────────────────────────────────────────────────────────────────
 
-def draw_hud(frame, idx, total, playing, speed, reverse, loop, label="", last_key=255):
+HELP_LINES = [
+    "SPACE  play/pause",
+    "</>    step frame",
+    "^/v    speed x2//2",
+    "R      reverse",
+    "L      loop",
+    "1-9    jump %",
+    "S      save PNG",
+    "H      hide help",
+    "Q/Esc  quit",
+    "--- camera (need --depth) ---",
+    "A/D    yaw left/right",
+    "Z/X    pitch up/down",
+    "E/F    roll CCW/CW",
+    "C      reset view  (yaw/pitch +-5)",
+]
+
+
+def draw_hud(frame, idx, total, playing, speed, reverse, loop, label="", last_key=255, show_help=False):
     h, w = frame.shape[:2]
     out = frame.copy()
 
@@ -171,14 +193,22 @@ def draw_hud(frame, idx, total, playing, speed, reverse, loop, label="", last_ke
 
     icon  = ">" if playing else "||"
     flags = ("R" if reverse else "") + ("L" if loop else "")
-    text  = f"{icon} {idx+1}/{total}  {speed:.2f}x  {flags}  {label}"
+    text  = f"{icon} {idx+1}/{total}  {speed:.2f}x  {flags}  {label}  [H=help]"
     cv2.putText(out, text, (8, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
     cv2.putText(out, text, (8, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
-    key_char = chr(last_key) if 32 <= last_key < 127 else f"#{last_key}"
-    key_text = f"key:{key_char}"
-    cv2.putText(out, key_text, (w - 80, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 2, cv2.LINE_AA)
-    cv2.putText(out, key_text, (w - 80, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1, cv2.LINE_AA)
+    if show_help:
+        pad, line_h = 8, 18
+        box_h = len(HELP_LINES) * line_h + pad * 2
+        box_w = 220
+        overlay = out.copy()
+        cv2.rectangle(overlay, (pad, pad), (pad + box_w, pad + box_h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.7, out, 0.3, 0, out)
+        for i, line in enumerate(HELP_LINES):
+            color = (180, 180, 180) if not line.startswith("---") else (100, 200, 255)
+            cv2.putText(out, line, (pad * 2, pad + line_h * (i + 1)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+
     return out
 
 
@@ -231,8 +261,10 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
     loop = False
     yaw = 0.0
     pitch = 0.0
+    roll = 0.0
     last_key = 255
-    step_rad = np.radians(3.0)
+    show_help = False
+    step_rad = np.radians(0.3)
     warp_cache = {"yaw": None, "pitch": None, "map_x": None, "map_y": None}
     frame_delay = 1.0 / fps
     last_time = time.time()
@@ -251,26 +283,26 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
             idx = max(0, min(T - 1, idx))
 
         # Recompute warp maps only when angle changes
-        if has_depth and (yaw != warp_cache["yaw"] or pitch != warp_cache["pitch"]):
+        if has_depth and (yaw != warp_cache.get("yaw") or pitch != warp_cache.get("pitch") or roll != warp_cache.get("roll")):
             print(f"Computing warp maps: yaw={np.degrees(yaw):.1f} pitch={np.degrees(pitch):.1f}")
-            warp_cache["map_x"], warp_cache["map_y"] = make_warp_maps(depth, K, yaw, pitch)
-            print(f"  map_x range: [{warp_cache['map_x'].min():.1f}, {warp_cache['map_x'].max():.1f}]")
+            warp_cache["map_x"], warp_cache["map_y"] = make_warp_maps(depth, K, yaw, pitch, roll)
             warp_cache["yaw"] = yaw
             warp_cache["pitch"] = pitch
+            warp_cache["roll"] = roll
 
         # Warp each panel independently, then concatenate
         panels = []
         for v in padded:
             frame_rgb = v[idx]
-            if has_depth and (yaw != 0.0 or pitch != 0.0):
+            if has_depth and (yaw != 0.0 or pitch != 0.0 or roll != 0.0):
                 frame_rgb = cv2.remap(frame_rgb, warp_cache["map_x"], warp_cache["map_y"],
                                       cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
             panels.append(frame_rgb)
         frame_rgb = np.concatenate(panels, axis=1) if len(panels) > 1 else panels[0]
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
-        angle_str = f"  yaw={np.degrees(yaw):.0f} pit={np.degrees(pitch):.0f}" if has_depth else ""
-        frame_bgr = draw_hud(frame_bgr, idx, T, playing, speed, reverse, loop, label + angle_str, last_key)
+        angle_str = f"  yaw={np.degrees(yaw):.0f} pit={np.degrees(pitch):.0f} rol={np.degrees(roll):.0f}" if has_depth else ""
+        frame_bgr = draw_hud(frame_bgr, idx, T, playing, speed, reverse, loop, label + angle_str, last_key, show_help)
         cv2.imshow(win, frame_bgr)
 
         raw = cv2.waitKey(1)
@@ -292,6 +324,8 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
             speed = min(speed * 2, 16.0)
         elif key == 84 or key == 2621440 % 256:  # Down arrow
             speed = max(speed / 2, 0.0625)
+        elif key == ord('h'):
+            show_help = not show_help
         elif key == ord('r'):
             reverse = not reverse
         elif key == ord('l'):
@@ -306,19 +340,25 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
             idx = 0
         elif key == 255:
             idx = T - 1
-        elif key in (ord('a'), ord('d'), ord('z'), ord('x'), ord('c')):
+        elif key in (ord('a'), ord('d'), ord('z'), ord('x'), ord('e'), ord('f'), ord('c')):
             if has_depth:
+                max_angle = np.radians(5.0)
                 if key == ord('a'):
-                    yaw -= step_rad
+                    yaw = max(-max_angle, yaw - step_rad)
                 elif key == ord('d'):
-                    yaw += step_rad
+                    yaw = min(max_angle, yaw + step_rad)
                 elif key == ord('z'):
-                    pitch -= step_rad
+                    pitch = max(-max_angle, pitch - step_rad)
                 elif key == ord('x'):
-                    pitch += step_rad
+                    pitch = min(max_angle, pitch + step_rad)
+                elif key == ord('e'):
+                    roll -= step_rad
+                elif key == ord('f'):
+                    roll += step_rad
                 elif key == ord('c'):
                     yaw = 0.0
                     pitch = 0.0
+                    roll = 0.0
             else:
                 print("No depth loaded — pass --depth <path_to_depth.npz> to enable camera rotation")
 

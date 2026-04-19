@@ -163,6 +163,65 @@ Output is written next to the input video as `<sample_id>_gs_ours/`:
 **Runtime on 1× H100 80GB:** ~1 min (VIPE + DA3 depth + GS render).
 
 
+## Scripts Reference
+
+### Batch Files (Windows)
+
+| Script | Description |
+|--------|-------------|
+| `install.bat` | Install Python dependencies into the project venv |
+| `build_vipe.bat` | Compile the VIPE CUDA pose estimation extension |
+| `run_example.bat [sample_id]` | Run zoom-in/out inference on bundled samples. Without arg: all 15 samples. With arg (e.g. `07`): single sample only |
+| `run_skyfall.bat` | Download Skyfall-GS NYC dataset, prepare depth, run inference on all scenes |
+| `run_skyfall_full.bat` | Same as above with timing summary |
+| `run_skyfall_multiframe.bat` | Run NYC_004 scene with optional RIFE frame interpolation (`USE_RIFE=1`) |
+| `run_recon.bat` | Run VIPE + DA3 3D Gaussian Splatting reconstruction on a generated video |
+| `run_vbench.bat` | Evaluate generated videos with VBench metrics |
+
+### Python Scripts (`scripts/`)
+
+#### Data Preparation
+
+| Script | Description |
+|--------|-------------|
+| `download_skyfall.py` | Download Skyfall-GS dataset from HuggingFace (`--city NYC\|Jacksonville`) |
+| `prepare_skyfall.py` | Extract reference frames from Skyfall scenes with 16:9 center crop; adjusts K matrix. Args: `--skyfall_dir`, `--out_dir`, `--frame_idx`, `--scenes`, `--crop_aspect` |
+| `prepare_skyfall_depth.py` | Project PLY point clouds into reference cameras to produce dense depth maps (avoids DA3). Outputs `{idx}_depth.npz` with `depth_hw`, `K_33`, `mask_hw`. Args: same as above |
+| `prepare_skyfall_multiframe.py` | Build multi-frame spatial cache (`{idx}_multiframe.npz`) from N adjacent Skyfall frames for richer spatial context during inference |
+| `install_eigen3.py` | Download Eigen 3.4.0 headers into the PyTorch include path (required for VIPE CUDA build) |
+
+#### Inference Utilities
+
+| Script | Description |
+|--------|-------------|
+| `decode_latents.py` | Decode saved latents (`.pt`) to video without re-running diffusion. Supports `--speed`, `--reverse`, `--loop`, `--frames`. Args: `--latent`, `--out`, `--vae_pth` |
+| `explore_latents.py` | Interactive frame-by-frame latent explorer. Decodes once and caches (`_decoded.npy`). Pass `--depth` for real-time depth-based camera rotation. Args: `--latent`, `--also` (side-by-side), `--depth`, `--no-cache` |
+| `interpolate_videos.py` | RIFE-style linear frame interpolation: insert N-1 blended frames between each pair, regenerates `combined.mp4`. Args: `--per_image_dir`, `--factor`, `--fps` |
+| `visualize_scene.py` | 3D matplotlib viewer: PLY point cloud + training cameras + zoom trajectory overlay. Args: `--scene`, `--ref_frame`, `--zoom_strength` |
+
+#### Optimization / Benchmarking
+
+| Script | Description |
+|--------|-------------|
+| `export_vae_onnx.py` | Export VAE encoder chunk to ONNX with explicit cache tensors as I/O (for ORT/TensorRT). Optionally benchmarks PyTorch vs ORT. Args: `--vae_pth`, `--out`, `--resolution`, `--benchmark` |
+
+### explore_latents.py Controls
+
+```
+Space        Play / Pause
+< / >        Step one frame (arrow keys)
+^ / v        Speed x2 / /2 (arrow keys)
+A / D        Rotate camera yaw left / right  (requires --depth)
+Z / X        Tilt camera pitch up / down     (requires --depth)
+C            Reset camera rotation
+R            Reverse playback direction
+L            Toggle ping-pong loop
+1-9          Jump to 10%-90% of video
+S            Save current frame as PNG
+Mouse drag   Scrub timeline
+Q / Esc      Quit
+```
+
 ## Acknowledgement
 
 We thank the following open-source projects that this work builds upon:
