@@ -124,7 +124,7 @@ def draw_hud(frame, idx, total, playing, speed, reverse, loop, label=""):
     cv2.rectangle(out, (0, bar_y), (fill, bar_y + bar_h), (0, 200, 100), -1)
 
     # Status text
-    icon  = "▶" if playing else "⏸"
+    icon  = ">" if playing else "||"
     flags = ("R" if reverse else "") + ("L" if loop else "")
     text  = f"{icon} {idx+1}/{total}  {speed:.2f}x  {flags}  {label}"
     cv2.putText(out, text, (8, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)
@@ -170,7 +170,8 @@ def run_explorer(all_videos, labels, fps=16, save_dir="."):
     T, H, W, _ = frames.shape
     win = "Lyra-2 Latent Explorer"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(win, min(W * 2, 1440), min(H * 2, 900))
+    scale = min(1440 / W, 900 / H, 2.0)
+    cv2.resizeWindow(win, int(W * scale), int(H * scale))
 
     mouse_state = {"dragging": False, "x": 0}
     cv2.setMouseCallback(win, make_mouse_cb(mouse_state, frames))
