@@ -52,14 +52,31 @@ def build_K(meta: dict) -> np.ndarray:
     ], dtype=np.float32)
 
 
-def prepare_scene(scene_dir: str, out_dir: str, idx: int, frame_idx: int, prompt: str):
+def center_crop_to_aspect(img: Image.Image, K: np.ndarray, aspect_w: float, aspect_h: float):
+    """Center-crop image and adjust K to match the given aspect ratio."""
+    W, H = img.size
+    target_w = W
+    target_h = round(W * aspect_h / aspect_w)
+    if target_h > H:
+        target_h = H
+        target_w = round(H * aspect_w / aspect_h)
+    left = (W - target_w) // 2
+    top  = (H - target_h) // 2
+    img = img.crop((left, top, left + target_w, top + target_h))
+    K = K.copy()
+    K[0, 2] -= left   # cx
+    K[1, 2] -= top    # cy
+    return img, K, target_w, target_h
+
+
+def prepare_scene(scene_dir: str, out_dir: str, idx: int, frame_idx: int, prompt: str,
+                  crop_aspect: tuple[float, float] | None = None):
     meta = load_transforms(scene_dir)
     frames = meta["frames"]
     frame = frames[min(frame_idx, len(frames) - 1)]
 
     src_img = os.path.join(scene_dir, frame["file_path"])
     if not os.path.exists(src_img):
-        # try jpg if file_path has no extension match
         base = os.path.splitext(src_img)[0]
         for ext in (".jpg", ".jpeg", ".png", ".JPG"):
             if os.path.exists(base + ext):
@@ -72,6 +89,12 @@ def prepare_scene(scene_dir: str, out_dir: str, idx: int, frame_idx: int, prompt
     dst_pose = os.path.join(out_dir, f"{tag}_pose.npz")
 
     img = Image.open(src_img).convert("RGB")
+    K = build_K(meta)
+    img_w, img_h = meta.get("w", img.size[0]), meta.get("h", img.size[1])
+
+    if crop_aspect is not None:
+        img, K, img_w, img_h = center_crop_to_aspect(img, K, crop_aspect[0], crop_aspect[1])
+
     img.save(dst_img)
 
     with open(dst_txt, "w") as f:
@@ -79,12 +102,12 @@ def prepare_scene(scene_dir: str, out_dir: str, idx: int, frame_idx: int, prompt
 
     c2w = np.array(frame["transform_matrix"], dtype=np.float32)
     w2c = c2w_to_w2c(c2w)
-    K = build_K(meta)
     np.savez(dst_pose, w2c=w2c, K=K, c2w=c2w,
-             image_wh=np.array([meta.get("w", 2048), meta.get("h", 2048)]))
+             image_wh=np.array([img_w, img_h]))
 
     scene_name = os.path.basename(scene_dir)
-    print(f"  [{tag}] {scene_name} frame {frame_idx} → {dst_img}")
+    crop_str = f" (cropped {img.size[0]}×{img.size[1]})" if crop_aspect else ""
+    print(f"  [{tag}] {scene_name} frame {frame_idx} -> {dst_img}{crop_str}")
 
 
 def main():
@@ -98,7 +121,14 @@ def main():
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
     parser.add_argument("--scenes", nargs="*",
                         help="Specific scene names to process (default: all)")
+    parser.add_argument("--crop_aspect", type=str, default="16:9",
+                        help="Center-crop to W:H aspect ratio, e.g. 16:9. Pass 'none' to disable.")
     args = parser.parse_args()
+
+    crop_aspect = None
+    if args.crop_aspect.lower() != "none":
+        aw, ah = args.crop_aspect.split(":")
+        crop_aspect = (float(aw), float(ah))
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -109,7 +139,7 @@ def main():
     if args.scenes:
         scenes = [s for s in scenes if s in args.scenes]
 
-    print(f"Preparing {len(scenes)} scene(s) → {args.out_dir}")
+    print(f"Preparing {len(scenes)} scene(s) -> {args.out_dir}")
     for i, scene in enumerate(scenes):
         prepare_scene(
             scene_dir=os.path.join(args.skyfall_dir, scene),
@@ -117,6 +147,7 @@ def main():
             idx=i,
             frame_idx=args.frame_idx,
             prompt=args.prompt,
+            crop_aspect=crop_aspect,
         )
 
     print(f"\nDone. Run inference with:")

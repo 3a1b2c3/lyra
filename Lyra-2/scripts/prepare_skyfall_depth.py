@@ -72,10 +72,11 @@ def densify(u_vis, v_vis, Z_vis, H, W) -> tuple[np.ndarray, np.ndarray]:
     return dense, mask.astype(np.float32)
 
 
-def prepare_scene_depth(scene_dir: str, out_dir: str, idx: int, frame_idx: int = 0):
+def prepare_scene_depth(scene_dir: str, out_dir: str, idx: int, frame_idx: int = 0,
+                        crop_aspect: tuple[float, float] | None = None):
     ply_path = os.path.join(scene_dir, "points3D.ply")
     if not os.path.exists(ply_path):
-        print(f"  [{idx:02d}] No points3D.ply — skipping")
+        print(f"  [{idx:02d}] No points3D.ply - skipping")
         return
 
     for name in ("transforms.json", "transforms_train.json"):
@@ -104,6 +105,21 @@ def prepare_scene_depth(scene_dir: str, out_dir: str, idx: int, frame_idx: int =
 
     depth_dense, mask_hw = densify(u[vis], v[vis], Z[vis], H, W)
 
+    # Center-crop depth map and adjust K to match cropped image
+    if crop_aspect is not None:
+        crop_w = W
+        crop_h = round(W * crop_aspect[1] / crop_aspect[0])
+        if crop_h > H:
+            crop_h = H
+            crop_w = round(H * crop_aspect[0] / crop_aspect[1])
+        left = (W - crop_w) // 2
+        top  = (H - crop_h) // 2
+        depth_dense = depth_dense[top:top + crop_h, left:left + crop_w]
+        mask_hw     = mask_hw[top:top + crop_h, left:left + crop_w]
+        cx -= left
+        cy -= top
+        W, H = crop_w, crop_h
+
     K_33 = np.array([[fl_x, 0, cx], [0, fl_y, cy], [0, 0, 1]], dtype=np.float32)
 
     tag = f"{idx:02d}"
@@ -118,7 +134,14 @@ def main():
     parser.add_argument("--out_dir", default=OUT_DIR)
     parser.add_argument("--frame_idx", type=int, default=0)
     parser.add_argument("--scenes", nargs="*", help="Specific scene names; default: all")
+    parser.add_argument("--crop_aspect", type=str, default="16:9",
+                        help="Center-crop to W:H aspect ratio after projection. Pass 'none' to disable.")
     args = parser.parse_args()
+
+    crop_aspect = None
+    if args.crop_aspect.lower() != "none":
+        aw, ah = args.crop_aspect.split(":")
+        crop_aspect = (float(aw), float(ah))
 
     scenes = sorted(
         d for d in os.listdir(args.skyfall_dir)
@@ -134,6 +157,7 @@ def main():
             out_dir=args.out_dir,
             idx=i,
             frame_idx=args.frame_idx,
+            crop_aspect=crop_aspect,
         )
     print("Done.")
 
