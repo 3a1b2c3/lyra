@@ -150,6 +150,16 @@ def parse_arguments() -> argparse.Namespace:
                         help="Directory containing per-image .txt caption files. "
                              "Each file should be named <image_stem>.txt. "
                              "When set, Gemini captioning is skipped entirely.")
+    parser.add_argument("--depth_dir", type=str, default=None,
+                        help="Directory containing pre-computed depth npz files "
+                             "(e.g. from prepare_skyfall_depth.py). Each file should "
+                             "be named <image_stem>_depth.npz with keys depth_hw, K_33, "
+                             "mask_hw. When set, DA3 depth estimation is skipped.")
+    parser.add_argument("--multiframe_cache_dir", type=str, default=None,
+                        help="Directory containing multiframe cache npz files "
+                             "(e.g. from prepare_skyfall_multiframe.py). Files named "
+                             "<scene>_multiframe.npz. Frames beyond index 0 are seeded "
+                             "into Sparse3DCache as spatial reference views.")
     parser.add_argument("--prompt_suffix", type=str, default="",
                         help="Text appended to every prompt.")
 
@@ -367,6 +377,34 @@ def _correct_trajectory_ground_parallel(
     return corrected
 
 
+def _load_multiframe_cache(cache_dir: str, scene_name: str, device) -> tuple[dict, list[int]] | tuple[None, None]:
+    """Load a multiframe cache npz and return (multiview_data, multiview_ids) or (None, None)."""
+    path = os.path.join(cache_dir, f"{scene_name}_multiframe.npz")
+    if not os.path.exists(path):
+        log.warning(f"Multiframe cache not found: {path}", rank0_only=True)
+        return None, None
+    npz = np.load(path)
+    T = npz["video"].shape[0]
+    if T < 2:
+        return None, None
+    # Normalize video to [-1, 1], shape (B=1, C, T, H, W)
+    video_np = npz["video"].astype(np.float32) / 127.5 - 1.0      # (T, H, W, 3)
+    mv_video = torch.from_numpy(video_np).permute(3, 0, 1, 2).unsqueeze(0)  # (1, 3, T, H, W)
+    mv_depth = torch.from_numpy(npz["depth_hw"]).unsqueeze(0)               # (1, T, H, W)
+    mv_w2c = torch.from_numpy(npz["camera_w2c"]).unsqueeze(0)               # (1, T, 4, 4)
+    mv_K = torch.from_numpy(npz["intrinsics"]).unsqueeze(0)                  # (1, T, 3, 3)
+    multiview_data = {
+        "video": mv_video.to(device=device),
+        "depth": mv_depth.to(device=device),
+        "camera_w2c": mv_w2c.to(device=device),
+        "intrinsics": mv_K.to(device=device),
+    }
+    # Skip index 0 (same as reference frame); use remaining frames as spatial views
+    multiview_ids = list(range(1, T))
+    log.info(f"Loaded multiframe cache: {path} ({T} frames, using ids {multiview_ids})", rank0_only=True)
+    return multiview_data, multiview_ids
+
+
 def _generate_one_direction(
     *,
     model,
@@ -387,6 +425,8 @@ def _generate_one_direction(
     ground_normal_cam: torch.Tensor | None = None,
     upward_shift: float = 0.0,
     zoom_out_upward_ratio: float = 0.0,
+    multiview_data: dict | None = None,
+    multiview_ids: list[int] | None = None,
 ) -> dict | None:
     """Run AR spatial inference for a single camera trajectory direction."""
     device = model.tensor_kwargs.get("device", None)
@@ -458,7 +498,10 @@ def _generate_one_direction(
     )
 
     saved_num_frames = args.num_frames
+    saved_multiview_ids = getattr(args, "multiview_ids", None)
     args.num_frames = N
+    if multiview_ids is not None:
+        args.multiview_ids = multiview_ids
     try:
         result = run_lyra2_sample(
             model,
@@ -468,9 +511,11 @@ def _generate_one_direction(
             da3_model=da3_model,
             show_progress=True,
             log_prefix=log_prefix,
+            multiview_data=multiview_data,
         )
     finally:
         args.num_frames = saved_num_frames
+        args.multiview_ids = saved_multiview_ids
 
     return result
 
@@ -673,12 +718,35 @@ if __name__ == "__main__":
         rgb_t = torch.from_numpy(rgb)  # H,W,3 uint8
 
         # Step 1: Depth & intrinsics
-        log.info("Running DA3 single-image depth...", rank0_only=True)
-        image_chw01, depth_hw, K_33, mask_hw = _da3_infer_depth_intrinsics_single(
-            da3_model=da3_model,
-            img_rgb_uint8=rgb_t,
-            target_hw=(target_h, target_w),
+        depth_npz_path = (
+            os.path.join(args.depth_dir, f"{base_name}_depth.npz")
+            if args.depth_dir else None
         )
+        if depth_npz_path and os.path.exists(depth_npz_path):
+            log.info(f"Loading pre-computed depth from {depth_npz_path}", rank0_only=True)
+            npz = np.load(depth_npz_path)
+            depth_hw_np = npz["depth_hw"].astype(np.float32)
+            K_33 = torch.from_numpy(npz["K_33"].astype(np.float32))
+            mask_hw_np = npz["mask_hw"].astype(np.float32)
+            # Resize to target resolution and build image tensor
+            img_resized = cv2.resize(rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+            image_chw01 = torch.from_numpy(img_resized).permute(2, 0, 1).unsqueeze(0).contiguous().float() / 255.0
+            H, W = target_h, target_w
+            # Scale K to match target resolution (row *= sx scales fl and c together)
+            orig_h, orig_w = depth_hw_np.shape
+            K_33[0] *= W / orig_w
+            K_33[1] *= H / orig_h
+            depth_t = torch.from_numpy(cv2.resize(depth_hw_np, (W, H), interpolation=cv2.INTER_NEAREST))
+            mask_t = torch.from_numpy(cv2.resize(mask_hw_np, (W, H), interpolation=cv2.INTER_NEAREST))
+            depth_hw = torch.nan_to_num(depth_t, nan=1e4).clamp(min=0, max=1e4)
+            mask_hw = (mask_t > 0.5).float()
+        else:
+            log.info("Running DA3 single-image depth...", rank0_only=True)
+            image_chw01, depth_hw, K_33, mask_hw = _da3_infer_depth_intrinsics_single(
+                da3_model=da3_model,
+                img_rgb_uint8=rgb_t,
+                target_hw=(target_h, target_w),
+            )
         H, W = image_chw01.shape[-2:]
 
         # Step 1b: Optionally align DA3 depth to MoGe scale
@@ -768,7 +836,14 @@ if __name__ == "__main__":
         N_in = int(args.num_frames_zoom_in or args.num_frames)
         N_out = int(args.num_frames_zoom_out or args.num_frames)
 
-        # Step 2c: Optionally fit ground plane for trajectory alignment
+        # Step 2c: Load multiframe spatial cache if available
+        mv_data, mv_ids = None, None
+        if args.multiframe_cache_dir:
+            mv_data, mv_ids = _load_multiframe_cache(
+                args.multiframe_cache_dir, base_name, desired_device
+            )
+
+        # Step 2d: Optionally fit ground plane for trajectory alignment
         ground_normal = None
         if args.ground_plane_align:
             ground_normal = _fit_ground_normal_from_depth(
@@ -797,6 +872,8 @@ if __name__ == "__main__":
             process_group=process_group,
             log_prefix=f"{base_name}_zoom_in",
             ground_normal_cam=ground_normal,
+            multiview_data=mv_data,
+            multiview_ids=mv_ids,
         )
 
         gc.collect()
@@ -836,6 +913,8 @@ if __name__ == "__main__":
                 upward_shift=args.zoom_out_upward_shift,
                 ground_normal_cam=ground_normal,
                 zoom_out_upward_ratio=args.zoom_out_upward_ratio,
+                multiview_data=mv_data,
+                multiview_ids=mv_ids,
             )
 
         if _wc is not None:

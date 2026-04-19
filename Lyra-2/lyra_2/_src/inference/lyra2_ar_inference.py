@@ -1228,6 +1228,7 @@ def run_lyra2_sample(
     log_prefix="Start AR spatial inference",
     da3_gs_export_stem=None,
     vipe_input_dump_dir=None,
+    multiview_data=None,
 ):
     """Shared Lyra2 autoregressive generation logic for a single prepared sample."""
     model._normalize_video_databatch_inplace(data_batch)
@@ -1241,9 +1242,8 @@ def run_lyra2_sample(
     first_cam_w2c = data_batch["camera_w2c"][:, 0]
     first_intrinsics = data_batch["intrinsics"][:, 0]
 
-    # Multiview input: pass full data tensors so the pipeline can seed the cache.
-    multiview_data = None
-    if getattr(args, "multiview_ids", None):
+    # Multiview input: use explicit multiview_data if provided, otherwise build from data_batch.
+    if multiview_data is None and getattr(args, "multiview_ids", None):
         multiview_data = {
             "video": data_batch["video"],
             "depth": data_batch["depth"],
