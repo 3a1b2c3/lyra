@@ -252,7 +252,9 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
 
         # Recompute warp maps only when angle changes
         if has_depth and (yaw != warp_cache["yaw"] or pitch != warp_cache["pitch"]):
+            print(f"Computing warp maps: yaw={np.degrees(yaw):.1f} pitch={np.degrees(pitch):.1f}")
             warp_cache["map_x"], warp_cache["map_y"] = make_warp_maps(depth, K, yaw, pitch)
+            print(f"  map_x range: [{warp_cache['map_x'].min():.1f}, {warp_cache['map_x'].max():.1f}]")
             warp_cache["yaw"] = yaw
             warp_cache["pitch"] = pitch
 
@@ -304,18 +306,21 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
             idx = 0
         elif key == 255:
             idx = T - 1
-        elif has_depth:
-            if key == ord('a'):
-                yaw -= step_rad
-            elif key == ord('d'):
-                yaw += step_rad
-            elif key == ord('z'):
-                pitch -= step_rad
-            elif key == ord('x'):
-                pitch += step_rad
-            elif key == ord('c'):
-                yaw = 0.0
-                pitch = 0.0
+        elif key in (ord('a'), ord('d'), ord('z'), ord('x'), ord('c')):
+            if has_depth:
+                if key == ord('a'):
+                    yaw -= step_rad
+                elif key == ord('d'):
+                    yaw += step_rad
+                elif key == ord('z'):
+                    pitch -= step_rad
+                elif key == ord('x'):
+                    pitch += step_rad
+                elif key == ord('c'):
+                    yaw = 0.0
+                    pitch = 0.0
+            else:
+                print("No depth loaded — pass --depth <path_to_depth.npz> to enable camera rotation")
 
         # Auto-advance when playing
         if playing and not mouse_state["dragging"]:
