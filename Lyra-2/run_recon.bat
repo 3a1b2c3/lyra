@@ -1,7 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
-set PYTHONPATH=%~dp0
+set VIRTUAL_ENV=%~dp0..\.venv
+set PATH=%VIRTUAL_ENV%\Scripts;%PATH%
+set PYTHONHOME=
+set PYTHONPATH=%~dp0;%VIRTUAL_ENV%\Lib\site-packages
 set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 set PYTHONUNBUFFERED=1
 

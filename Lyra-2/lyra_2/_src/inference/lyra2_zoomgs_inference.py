@@ -194,6 +194,9 @@ def parse_arguments() -> argparse.Namespace:
     # Camera trajectory for zoom
     parser.add_argument("--skip_zoom_out", action="store_true",
                         help="Skip zoom-out generation. Output is zoom-in only (~2x faster per sample).")
+    parser.add_argument("--partial_combined", action="store_true",
+                        help="Save videos/<name>_partial.mp4 (zoom-in reversed + zoom-in) immediately "
+                             "after zoom-in completes, so you can preview before zoom-out finishes.")
     parser.add_argument("--zoom_in_trajectory", type=str, default="horizontal_zoom",
                         choices=list(CAMERA_TRAJECTORY_CHOICES),
                         help="Camera trajectory for zoom-in video.")
@@ -901,6 +904,16 @@ if __name__ == "__main__":
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        # Save partial combined (zoom-in reversed + zoom-in) immediately so you can preview
+        if getattr(args, "partial_combined", False) and result_in is not None:
+            partial_video = torch.cat([result_in["video"].flip(dims=[2]), result_in["video"]], dim=2)
+            partial_path = os.path.join(videos_dir, f"{base_name}_partial.mp4")
+            partial_01 = (partial_video[0].clamp(-1, 1) * 0.5 + 0.5).float().cpu()
+            save_img_or_video(partial_01, partial_path.replace(".mp4", ""), fps=args.fps)
+            log.info(f"Saved partial combined: {partial_path}", rank0_only=True)
+            del partial_video, partial_01
+            gc.collect()
 
         _wc = getattr(model.net, "_worldcache", None)
         if _wc is not None:

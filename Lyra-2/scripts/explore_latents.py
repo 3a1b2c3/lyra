@@ -116,6 +116,23 @@ def decode_to_numpy(latent_path, vae_core, device, dtype, vae_stats_override=Non
     return video_np
 
 
+def load_video_file(path):
+    """Load an mp4/avi/etc into a (T, H, W, 3) uint8 RGB numpy array."""
+    cap = cv2.VideoCapture(path)
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    cap.release()
+    if not frames:
+        raise RuntimeError(f"Could not read any frames from {path}")
+    arr = np.stack(frames, axis=0)
+    print(f"Loaded {arr.shape[0]} frames from {path} ({arr.shape[2]}x{arr.shape[1]})")
+    return arr
+
+
 # ── Depth warp ─────────────────────────────────────────────────────────────────
 
 def load_depth(depth_npz, vid_H, vid_W):
@@ -291,14 +308,29 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
             warp_cache["roll"] = roll
 
         # Warp each panel independently, then concatenate
+        map_h = warp_cache["map_x"].shape[0] if warp_cache["map_x"] is not None else 0
+        map_w = warp_cache["map_x"].shape[1] if warp_cache["map_x"] is not None else 0
         panels = []
         for v in padded:
             frame_rgb = v[idx]
-            if has_depth and (yaw != 0.0 or pitch != 0.0 or roll != 0.0):
+            ph, pw = frame_rgb.shape[:2]
+            should_warp = (has_depth and (yaw != 0.0 or pitch != 0.0 or roll != 0.0)
+                           and ph == map_h and pw == map_w)
+            if should_warp:
                 frame_rgb = cv2.remap(frame_rgb, warp_cache["map_x"], warp_cache["map_y"],
                                       cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
             panels.append(frame_rgb)
-        frame_rgb = np.concatenate(panels, axis=1) if len(panels) > 1 else panels[0]
+
+        # Resize all panels to the same height before concatenating
+        target_h = panels[0].shape[0]
+        resized = []
+        for p in panels:
+            if p.shape[0] != target_h:
+                scale_h = target_h / p.shape[0]
+                new_w = int(p.shape[1] * scale_h)
+                p = cv2.resize(p, (new_w, target_h), interpolation=cv2.INTER_LINEAR)
+            resized.append(p)
+        frame_rgb = np.concatenate(resized, axis=1) if len(resized) > 1 else resized[0]
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
         angle_str = f"  yaw={np.degrees(yaw):.0f} pit={np.degrees(pitch):.0f} rol={np.degrees(roll):.0f}" if has_depth else ""
@@ -386,7 +418,7 @@ def run_explorer(all_videos, labels, fps=16, save_dir=".", depth=None, K=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--latent", required=True, help="Primary latent .pt file")
-    parser.add_argument("--also", nargs="*", default=[], help="Additional latent .pt files (shown side-by-side)")
+    parser.add_argument("--also", nargs="*", default=[], help="Additional .pt latent files or .mp4 video files shown side-by-side")
     parser.add_argument("--depth", default=None, help="Path to _depth.npz for camera rotation (e.g. assets/skyfall_input_004/00_depth.npz)")
     parser.add_argument("--vae_pth", default="checkpoints/vae/vae.pth")
     parser.add_argument("--fps", type=int, default=16)
@@ -399,14 +431,18 @@ def main():
     dtype = torch.bfloat16
     all_paths = [args.latent] + (args.also or [])
 
-    need_decode = [p for p in all_paths if not (args.cache and load_cached(p) is not None)]
+    VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    latent_paths = [p for p in all_paths if os.path.splitext(p)[1].lower() not in VIDEO_EXTS]
+    video_paths  = [p for p in all_paths if os.path.splitext(p)[1].lower() in VIDEO_EXTS]
+
+    need_decode = [p for p in latent_paths if not (args.cache and load_cached(p) is not None)]
     vae_core = None
     if need_decode:
         vae = load_vae(args.vae_pth, args.device, dtype)
         vae_core = vae.model
 
     all_videos, labels = [], []
-    for path in all_paths:
+    for path in latent_paths:
         if args.cache:
             arr = load_cached(path)
             if arr is not None:
@@ -418,6 +454,11 @@ def main():
             save_cached(path, arr)
         all_videos.append(arr)
         labels.append(os.path.basename(path).replace(".pt", ""))
+
+    for path in video_paths:
+        arr = load_video_file(path)
+        all_videos.append(arr)
+        labels.append(os.path.basename(path))
 
     depth, K = None, None
     depth_path = args.depth
